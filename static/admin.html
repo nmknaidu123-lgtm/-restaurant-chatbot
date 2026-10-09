@@ -109,6 +109,7 @@
     <button data-tab="bookings">Bookings</button>
     <button data-tab="menu">Menu</button>
     <button data-tab="discounts">Discounts</button>
+    <button data-tab="events">Events</button>
     <button data-tab="staff" data-admin>Staff</button>
     <button data-tab="settings">Settings</button>
   </nav>
@@ -182,21 +183,54 @@
       </div>
     </div>
 
+    <!-- Events -->
+    <div data-panel="events" class="hidden">
+      <div class="card">
+        <h2>Add an event</h2>
+        <form class="row" id="event-form">
+          <input id="e-title" placeholder="Event name (e.g. Live music night)" required maxlength="80">
+          <input id="e-date" type="date" required>
+          <input id="e-time" placeholder="Time (e.g. 8 PM)" maxlength="30">
+          <input id="e-desc" placeholder="Short description (optional)" maxlength="500">
+          <button class="primary" type="submit">Add event</button>
+        </form>
+        <p class="muted">Customers can ask the chatbot "Any events this week?" to see upcoming events.</p>
+      </div>
+      <div class="card">
+        <div class="toolbar"><h2>All events</h2><button class="small" onclick="loadEvents()">Refresh</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Event</th><th>Date</th><th>Time</th><th>Description</th><th></th></tr></thead>
+          <tbody id="events-body"></tbody>
+        </table></div>
+      </div>
+    </div>
+
     <!-- Staff (admin) -->
     <div data-panel="staff" class="hidden">
       <div class="card">
         <h2>Add a staff member</h2>
         <form class="row" id="staff-form">
-          <input id="s-user" placeholder="Username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.\-]+">
-          <input id="s-pass" type="password" placeholder="Password (min 6)" required minlength="6" autocomplete="new-password">
-          <select id="s-role"><option value="staff">staff</option><option value="admin">admin</option></select>
-          <button class="primary" type="submit">Add</button>
+          <input id="s-name" placeholder="Full name" maxlength="60">
+          <input id="s-pos" placeholder="Position (e.g. Waiter)" list="positions" maxlength="40">
+          <datalist id="positions"></datalist>
+          <input id="s-phone" placeholder="Phone" maxlength="20">
+          <select id="s-shift">
+            <option value="">Shift...</option>
+            <option>Morning (7 AM - 3 PM)</option><option>Evening (3 PM - 11 PM)</option>
+            <option>Full day (11 AM - 11 PM)</option></select>
+        </form>
+        <form class="row" id="staff-form-2" style="margin-top:8px" onsubmit="return false">
+          <input id="s-user" form="staff-form" placeholder="Username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.\-]+">
+          <input id="s-pass" form="staff-form" type="password" placeholder="Password (min 6)" required minlength="6" autocomplete="new-password">
+          <select id="s-role" form="staff-form"><option value="staff">staff</option><option value="admin">admin</option></select>
+          <button class="primary" type="submit" form="staff-form">Add staff</button>
         </form>
       </div>
       <div class="card">
-        <h2>Staff accounts</h2>
+        <div class="toolbar"><h2>Staff accounts <span class="muted" id="staff-count"></span></h2>
+          <input id="staff-search" placeholder="Search name, position, shift..." oninput="renderStaff()"></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Username</th><th>Role</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Position</th><th>Phone</th><th>Shift</th><th>Role</th><th></th></tr></thead>
           <tbody id="staff-body"></tbody>
         </table></div>
       </div>
@@ -318,7 +352,7 @@ $("logout").addEventListener("click", () => run(async () => {
 
 // ---------------- Tabs ----------------
 const loaders = { orders: loadOrders, bookings: loadBookings, menu: loadMenu,
-                  discounts: loadDiscounts, staff: loadStaff, settings: loadSettings };
+                  discounts: loadDiscounts, events: loadEvents, staff: loadStaff, settings: loadSettings };
 
 function openTab(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
@@ -456,23 +490,65 @@ $("disc-form").addEventListener("submit", (e) => {
   });
 });
 
+// ---------------- Events ----------------
+async function loadEvents() {
+  const events = await api("/staff/events");
+  const today = new Date().toISOString().slice(0, 10);
+  $("events-body").innerHTML = events.length ? events.map((e) => `
+    <tr class="${e.date < today ? "off" : ""}">
+      <td><strong>${esc(e.title)}</strong>${e.date < today ? ' <span class="muted">(past)</span>' : ""}</td>
+      <td>${esc(e.date)}</td><td>${esc(e.time)}</td><td class="muted">${esc(e.description)}</td>
+      <td><button class="small danger" data-evdel="${esc(e.id)}">Delete</button></td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">No events yet.</td></tr>`;
+  document.querySelectorAll("[data-evdel]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!confirm("Delete this event?")) return;
+    run(async () => { await api(`/staff/events/${encodeURIComponent(btn.dataset.evdel)}`, "DELETE"); toast("Event deleted"); loadEvents(); });
+  }));
+}
+
+$("event-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  run(async () => {
+    const r = await api("/staff/events", "POST", {
+      title: $("e-title").value.trim(), date: $("e-date").value,
+      time: $("e-time").value.trim(), description: $("e-desc").value.trim(),
+    });
+    toast(r.message); $("event-form").reset(); loadEvents();
+  });
+});
+
 // ---------------- Staff (admin) ----------------
+let staffRows = [];
+
 async function loadStaff() {
   if (me.role !== "admin") return;
-  const users = await api("/staff/users");
-  $("staff-body").innerHTML = users.map((u) => {
+  staffRows = await api("/staff/users");
+  const positions = [...new Set(staffRows.map((u) => u.position).filter(Boolean))];
+  $("positions").innerHTML = positions.map((p) => `<option value="${esc(p)}">`).join("");
+  renderStaff();
+}
+
+function renderStaff() {
+  const q = $("staff-search").value.trim().toLowerCase();
+  const rows = staffRows.filter((u) => !q || [u.username, u.full_name, u.position, u.shift, u.phone, u.role]
+    .some((v) => (v || "").toLowerCase().includes(q)));
+  $("staff-count").textContent = `(${staffRows.length} people)`;
+  $("staff-body").innerHTML = rows.length ? rows.map((u) => {
     const self = u.username === me.username;
-    return `<tr><td><strong>${esc(u.username)}</strong>${self ? ' <span class="muted">(you)</span>' : ""}</td>
+    return `<tr><td><strong>${esc(u.full_name || u.username)}</strong>${self ? ' <span class="muted">(you)</span>' : ""}
+        <div class="muted">${esc(u.username)}</div></td>
+      <td>${esc(u.position)}</td><td class="muted">${esc(u.phone)}</td><td class="muted">${esc(u.shift)}</td>
       <td><select data-urole="${esc(u.username)}" ${self ? "disabled" : ""}>
         <option ${u.role === "staff" ? "selected" : ""}>staff</option>
         <option ${u.role === "admin" ? "selected" : ""}>admin</option></select></td>
       <td><div class="actions"><button class="small" data-pw="${esc(u.username)}">Reset password</button>
         ${self ? "" : `<button class="small danger" data-udel="${esc(u.username)}">Delete</button>`}</div></td></tr>`;
-  }).join("");
+  }).join("") : `<tr><td colspan="6" class="empty">No staff found.</td></tr>`;
 
   document.querySelectorAll("[data-urole]").forEach((sel) => sel.addEventListener("change", () => run(async () => {
     await api(`/staff/users/${encodeURIComponent(sel.dataset.urole)}`, "PUT", { role: sel.value });
     toast(`${sel.dataset.urole} is now ${sel.value}`);
+    loadStaff();
   })));
   document.querySelectorAll("[data-pw]").forEach((btn) => btn.addEventListener("click", () => {
     const pw = prompt(`New password for ${btn.dataset.pw} (at least 6 characters):`);
@@ -488,8 +564,15 @@ async function loadStaff() {
 $("staff-form").addEventListener("submit", (e) => {
   e.preventDefault();
   run(async () => {
-    const r = await api("/staff/users", "POST", { username: $("s-user").value.trim(), password: $("s-pass").value, role: $("s-role").value });
-    toast(r.message); $("staff-form").reset(); loadStaff();
+    const r = await api("/staff/users", "POST", {
+      username: $("s-user").value.trim(), password: $("s-pass").value, role: $("s-role").value,
+      full_name: $("s-name").value.trim(), position: $("s-pos").value.trim(),
+      phone: $("s-phone").value.trim(), shift: $("s-shift").value,
+    });
+    toast(r.message);
+    ["s-user", "s-pass", "s-name", "s-pos", "s-phone"].forEach((id) => ($(id).value = ""));
+    $("s-shift").value = ""; $("s-role").value = "staff";
+    loadStaff();
   });
 });
 

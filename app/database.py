@@ -1,6 +1,6 @@
 """
 database.py - ONE place where all data is saved: the file restaurant.db (SQLite).
-Menu, restaurant settings, staff, login tokens, discount codes, orders and bookings
+Menu, restaurant settings, staff, login tokens, discount codes, orders, bookings and events
 all live here, so nothing is lost when the server restarts.
 """
 
@@ -86,7 +86,20 @@ def init_db() -> None:
             date       TEXT,
             time       TEXT
         );
+        CREATE TABLE IF NOT EXISTS events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            title       TEXT NOT NULL,
+            date        TEXT NOT NULL,
+            time        TEXT,
+            description TEXT
+        );
         """)
+
+        # Extra staff details (added later - safe to run on an existing database)
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(staff)")}
+        for column in ("full_name", "position", "phone", "shift"):
+            if column not in existing:
+                conn.execute(f"ALTER TABLE staff ADD COLUMN {column} TEXT")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -100,4 +113,9 @@ def init_db() -> None:
         if conn.execute("SELECT COUNT(*) FROM staff").fetchone()[0] == 0:
             for username, password, role in DEFAULT_STAFF:
                 salt, pw_hash = new_password_record(password)
-                conn.execute("INSERT INTO staff VALUES (?, ?, ?, ?)", (username, salt, pw_hash, role))
+                conn.execute(
+                    "INSERT INTO staff (username, salt, password_hash, role, full_name, position, shift) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (username, salt, pw_hash, role, username.title(),
+                     "Manager" if role == "admin" else "Waiter", "Full day"),
+                )

@@ -13,7 +13,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.data import get_menu, get_menu_by_category, get_setting
+from app.data import get_menu, get_menu_by_category, get_setting, get_events
 from app.discounts import calculate_bill
 
 load_dotenv()   # reads GEMINI_API_KEY from the .env file
@@ -45,7 +45,7 @@ class RestaurantState(TypedDict, total=False):
 
 
 class Intent(BaseModel):
-    intent: Literal["menu", "order", "booking", "question", "bill"]
+    intent: Literal["menu", "order", "booking", "question", "bill", "events"]
 
 
 class OrderItem(BaseModel):
@@ -74,7 +74,8 @@ def classify(state: RestaurantState) -> RestaurantState:
         "order = wants to order food\n"
         "booking = wants to reserve a table\n"
         "question = any other question about the restaurant\n"
-        "bill = wants the bill, total, or is finishing\n\n"
+        "bill = wants the bill, total, or is finishing\n"
+        "events = asks about events, parties, live music, festivals or what's happening\n\n"
         f"Message: {state['user_input']}"
     )
     return {"intent": result.intent}
@@ -149,6 +150,20 @@ def show_bill(state: RestaurantState) -> RestaurantState:
     return {"reply": text + f"\nTOTAL: Rs. {bill['total']}\nThank you!"}
 
 
+def show_events(state: RestaurantState) -> RestaurantState:
+    events = get_events(upcoming_only=True)
+    if not events:
+        return {"reply": "There are no upcoming events right now. Please check again soon!"}
+    lines = []
+    for e in events:
+        when = e["date"] + (f" at {e['time']}" if e.get("time") else "")
+        line = f"- {e['title']} ({when})"
+        if e.get("description"):
+            line += f": {e['description']}"
+        lines.append(line)
+    return {"reply": "Upcoming events:\n" + "\n".join(lines)}
+
+
 def route(state: RestaurantState) -> str:
     return state["intent"]
 
@@ -161,6 +176,7 @@ graph.add_node("take_order", take_order)
 graph.add_node("book_table", book_table)
 graph.add_node("answer_question", answer_question)
 graph.add_node("show_bill", show_bill)
+graph.add_node("show_events", show_events)
 
 graph.add_edge(START, "classify")
 graph.add_conditional_edges("classify", route, {
@@ -169,8 +185,9 @@ graph.add_conditional_edges("classify", route, {
     "booking": "book_table",
     "question": "answer_question",
     "bill": "show_bill",
+    "events": "show_events",
 })
-for node in ["show_menu", "take_order", "book_table", "answer_question", "show_bill"]:
+for node in ["show_menu", "take_order", "book_table", "answer_question", "show_bill", "show_events"]:
     graph.add_edge(node, END)
 
 bot = graph.compile(checkpointer=MemorySaver())

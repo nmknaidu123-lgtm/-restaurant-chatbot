@@ -85,3 +85,15 @@ def get_booking(session_id: str) -> dict | None:
         row = conn.execute("SELECT name, people, date, time FROM bookings WHERE session_id = ?",
                            (session_id,)).fetchone()
     return dict(row) if row else None
+
+
+# ---------------- Events ----------------
+def get_events(upcoming_only: bool = False) -> list[dict]:
+    """All events sorted by date. upcoming_only=True hides events whose date has passed."""
+    sql = "SELECT * FROM events"
+    params: tuple = ()
+    if upcoming_only:
+        sql += " WHERE date >= ?"
+        params = (datetime.now().date().isoformat(),)
+    with db() as conn:
+        return [dict(r) for r in conn.execute(sql + " ORDER BY date, time", params)]

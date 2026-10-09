@@ -7,6 +7,7 @@ API:    http://127.0.0.1:8000/docs
 """
 
 import json
+import datetime as dt
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -16,7 +17,8 @@ from pydantic import BaseModel, Field
 
 from app.database import db, init_db, new_password_record
 from app.data import (get_setting, set_setting, get_menu_by_category, get_menu_full,
-                      get_order_cart, save_order, get_order_status, save_booking, get_booking)
+                      get_order_cart, save_order, get_order_status, save_booking, get_booking,
+                      get_events)
 from app.graph import bot, session_state, clear_session
 from app.discounts import generate_code, list_codes, delete_code, apply_code, calculate_bill
 from app.auth import router as auth_router, current_staff, admin_only
@@ -250,6 +252,10 @@ class NewStaff(BaseModel):
                           examples=["ravi"])
     password: str = Field(min_length=6, max_length=100, examples=["ravi@2026"])
     role: Literal["staff", "admin"] = "staff"
+    full_name: str = Field(default="", max_length=60, examples=["Ravi Kumar"])
+    position: str = Field(default="", max_length=40, examples=["Waiter"])
+    phone: str = Field(default="", max_length=20, examples=["9876543210"])
+    shift: str = Field(default="", max_length=30, examples=["Morning"])
 
 
 class StaffUpdate(BaseModel):
@@ -260,7 +266,9 @@ class StaffUpdate(BaseModel):
 @api.get("/staff/users", tags=["Admin - Staff accounts"])
 def list_staff(staff: dict = Depends(admin_only)):
     with db() as conn:
-        return [dict(r) for r in conn.execute("SELECT username, role FROM staff ORDER BY username")]
+        return [dict(r) for r in conn.execute(
+            "SELECT username, role, full_name, position, phone, shift FROM staff "
+            "ORDER BY role, position, full_name, username")]
 
 
 @api.post("/staff/users", tags=["Admin - Staff accounts"])
@@ -269,8 +277,12 @@ def add_staff(body: NewStaff, staff: dict = Depends(admin_only)):
     with db() as conn:
         if conn.execute("SELECT 1 FROM staff WHERE username = ?", (body.username,)).fetchone():
             raise HTTPException(status_code=400, detail="Username already exists")
-        conn.execute("INSERT INTO staff VALUES (?, ?, ?, ?)",
-                     (body.username, salt, pw_hash, body.role))
+        conn.execute(
+            "INSERT INTO staff (username, salt, password_hash, role, full_name, position, phone, shift) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (body.username, salt, pw_hash, body.role, body.full_name.strip(),
+             body.position.strip(), body.phone.strip(), body.shift.strip()),
+        )
     return {"message": f"{body.username} added as {body.role}"}
 
 
@@ -325,3 +337,43 @@ def save_settings(body: Settings, staff: dict = Depends(admin_only)):
     set_setting("restaurant_name", body.restaurant_name.strip())
     set_setting("restaurant_info", body.restaurant_info.strip())
     return {"message": "Settings saved"}
+
+
+# =========================================================
+# EVENTS (customers see them, staff manage them)
+# =========================================================
+class EventIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80, examples=["Live music night"])
+    date: dt.date = Field(examples=["2026-10-17"], description="YYYY-MM-DD")
+    time: str = Field(default="", max_length=30, examples=["8 PM"])
+    description: str = Field(default="", max_length=500, examples=["Live ghazals with dinner"])
+
+
+@api.get("/events", tags=["Customer"])
+def upcoming_events():
+    """Events from today onwards (for customers)."""
+    return get_events(upcoming_only=True)
+
+
+@api.get("/staff/events", tags=["Staff - Events"])
+def all_events(staff: dict = Depends(current_staff)):
+    """Every event, including past ones (for the admin page)."""
+    return get_events()
+
+
+@api.post("/staff/events", tags=["Staff - Events"])
+def add_event(body: EventIn, staff: dict = Depends(current_staff)):
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO events (title, date, time, description) VALUES (?, ?, ?, ?)",
+            (body.title.strip(), body.date.isoformat(), body.time.strip(), body.description.strip()),
+        )
+    return {"message": f"Event '{body.title.strip()}' added", "id": cur.lastrowid}
+
+
+@api.delete("/staff/events/{event_id}", tags=["Staff - Events"])
+def delete_event(event_id: int, staff: dict = Depends(current_staff)):
+    with db() as conn:
+        if not conn.execute("DELETE FROM events WHERE id = ?", (event_id,)).rowcount:
+            raise HTTPException(status_code=404, detail="Event not found")
+    return {"message": "Event deleted"}
