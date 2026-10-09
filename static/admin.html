@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Restaurant Admin</title>
+<style>
+  :root {
+    --bg: #faf7f2; --card: #ffffff; --ink: #2b2420; --muted: #7a6f66; --line: #e8e1d8;
+    --brand: #b5471b; --brand-dark: #8f3612; --brand-soft: #fbeee6;
+    --ok: #2f7d4f; --ok-soft: #e6f3ea; --bad: #b42318; --bad-soft: #fdecea;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--ink); font-size: 15px; }
+  h1, h2 { margin: 0; font-weight: 600; }
+  h2 { font-size: 18px; margin-bottom: 12px; }
+  button, input, select, textarea { font: inherit; }
+  input, select, textarea { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+                            background: #fff; color: var(--ink); min-width: 0; }
+  textarea { width: 100%; min-height: 160px; resize: vertical; }
+  button { padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+           color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  button.primary:hover { background: var(--brand-dark); }
+  button.danger { color: var(--bad); }
+  button.danger:hover { border-color: var(--bad); background: var(--bad-soft); }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  .hidden { display: none !important; }
+
+  /* Login */
+  #login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+  .login-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+                padding: 28px; width: 100%; max-width: 360px; }
+  .login-card h1 { font-size: 22px; margin-bottom: 4px; }
+  .login-card p { color: var(--muted); margin: 0 0 20px; }
+  .login-card label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  .login-card input { width: 100%; }
+  .login-card button { width: 100%; margin-top: 20px; }
+
+  /* App */
+  header { background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 16px;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; flex: 1; }
+  .who { color: var(--muted); font-size: 14px; }
+  .role { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px;
+          background: var(--brand-soft); color: var(--brand-dark); margin-left: 4px; }
+  nav { display: flex; gap: 4px; padding: 0 16px; background: var(--card);
+        border-bottom: 1px solid var(--line); overflow-x: auto; }
+  nav button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 14px;
+               background: none; color: var(--muted); white-space: nowrap; }
+  nav button.active { color: var(--brand); border-bottom-color: var(--brand); }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > input, .row > select { flex: 1 1 140px; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+             flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar h2 { margin: 0; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  tr.cat td { background: var(--bg); font-weight: 600; color: var(--brand-dark); }
+  tr.off td { color: var(--muted); }
+  .num { text-align: right; white-space: nowrap; }
+  .items { margin: 0; padding-left: 16px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .empty { color: var(--muted); text-align: center; padding: 24px; }
+  .code { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  .new-code { margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--ok-soft); color: var(--ok); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .error { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 18px; }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px;
+           border-radius: 8px; background: var(--ink); color: #fff; font-size: 14px; max-width: 90vw;
+           opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  #toast.bad { background: var(--bad); }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="login">
+  <form class="login-card" id="login-form">
+    <h1>Staff login</h1>
+    <p>Manage menu, orders, staff and more.</p>
+    <label for="lu">Username</label>
+    <input id="lu" autocomplete="username" required>
+    <label for="lp">Password</label>
+    <input id="lp" type="password" autocomplete="current-password" required>
+    <button class="primary" type="submit">Log in</button>
+    <div class="error" id="login-error"></div>
+  </form>
+</section>
+
+<!-- ============ APP ============ -->
+<section id="app" class="hidden">
+  <header>
+    <h1 id="rname">Restaurant</h1>
+    <span class="who"><span id="uname"></span><span class="role" id="urole"></span></span>
+    <button class="small" id="logout">Log out</button>
+  </header>
+  <nav id="tabs">
+    <button data-tab="orders" class="active">Orders</button>
+    <button data-tab="bookings">Bookings</button>
+    <button data-tab="menu">Menu</button>
+    <button data-tab="discounts">Discounts</button>
+    <button data-tab="staff" data-admin>Staff</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+
+  <main>
+    <!-- Orders -->
+    <div data-panel="orders">
+      <div class="card">
+        <div class="toolbar"><h2>Orders</h2><button class="small" onclick="loadOrders()">Refresh</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Customer</th><th>Items</th><th class="num">Total</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+          <tbody id="orders-body"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- Bookings -->
+    <div data-panel="bookings" class="hidden">
+      <div class="card">
+        <div class="toolbar"><h2>Table bookings</h2><button class="small" onclick="loadBookings()">Refresh</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name</th><th>People</th><th>Date</th><th>Time</th><th>Customer</th><th></th></tr></thead>
+          <tbody id="bookings-body"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- Menu -->
+    <div data-panel="menu" class="hidden">
+      <div class="card" data-admin>
+        <h2 id="menu-form-title">Add or edit a dish</h2>
+        <form class="row" id="menu-form">
+          <input id="m-dish" placeholder="Dish name" required maxlength="60">
+          <input id="m-cat" placeholder="Category" list="cats" required maxlength="40">
+          <datalist id="cats"></datalist>
+          <input id="m-price" type="number" min="1" placeholder="Price (Rs.)" required>
+          <label class="muted"><input id="m-avail" type="checkbox" checked> Available</label>
+          <button class="primary" type="submit">Save dish</button>
+          <button type="button" onclick="resetMenuForm()">Clear</button>
+        </form>
+        <p class="muted">Saving a dish with an existing name updates it.</p>
+      </div>
+      <div class="card">
+        <div class="toolbar"><h2>Menu <span class="muted" id="menu-count"></span></h2>
+          <input id="menu-search" placeholder="Search dishes..." oninput="renderMenu()"></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Dish</th><th class="num">Price</th><th>Available</th><th></th></tr></thead>
+          <tbody id="menu-body"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- Discounts -->
+    <div data-panel="discounts" class="hidden">
+      <div class="card">
+        <h2>Generate a discount code</h2>
+        <form class="row" id="disc-form">
+          <input id="d-pct" type="number" min="1" max="50" placeholder="Percent off (1-50)" required>
+          <input id="d-uses" type="number" min="1" max="1000" value="1" placeholder="How many uses" required>
+          <button class="primary" type="submit">Generate code</button>
+        </form>
+        <p class="muted" id="disc-hint"></p>
+        <div id="new-code" class="new-code hidden"></div>
+      </div>
+      <div class="card">
+        <div class="toolbar"><h2>All codes</h2><button class="small" onclick="loadDiscounts()">Refresh</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Code</th><th class="num">Off</th><th class="num">Uses left</th><th>Created by</th><th></th></tr></thead>
+          <tbody id="disc-body"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- Staff (admin) -->
+    <div data-panel="staff" class="hidden">
+      <div class="card">
+        <h2>Add a staff member</h2>
+        <form class="row" id="staff-form">
+          <input id="s-user" placeholder="Username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.\-]+">
+          <input id="s-pass" type="password" placeholder="Password (min 6)" required minlength="6" autocomplete="new-password">
+          <select id="s-role"><option value="staff">staff</option><option value="admin">admin</option></select>
+          <button class="primary" type="submit">Add</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Staff accounts</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Username</th><th>Role</th><th></th></tr></thead>
+          <tbody id="staff-body"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div data-panel="settings" class="hidden">
+      <div class="card">
+        <h2>Restaurant details</h2>
+        <form id="settings-form">
+          <label class="muted" for="set-name">Restaurant name</label>
+          <div class="row" style="margin:4px 0 14px"><input id="set-name" required maxlength="60"></div>
+          <label class="muted" for="set-info">Information the chatbot uses to answer questions
+            (timings, location, parking, delivery, payment...)</label>
+          <textarea id="set-info" maxlength="2000" style="margin-top:4px"></textarea>
+          <div class="row" style="margin-top:12px" data-admin>
+            <button class="primary" type="submit">Save settings</button>
+          </div>
+          <p class="muted" id="settings-note"></p>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Change my password</h2>
+        <p class="muted">Ask an admin to reset your password from the Staff tab.</p>
+      </div>
+    </div>
+  </main>
+</section>
+
+<div id="toast"></div>
+
+<script>
+// ---------------- Helpers ----------------
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const rs = (n) => "Rs. " + Number(n || 0).toLocaleString("en-IN");
+
+let me = null;           // { token, username, role }
+let menuRows = [];
+let refreshTimer = null;
+
+function store(key, value) {
+  try { value === null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch (e) {}
+}
+function load(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
+
+function toast(msg, bad = false) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (bad ? " bad" : "");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => (t.className = ""), 2600);
+}
+
+async function api(path, method = "GET", body) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json", ...(me ? { Authorization: "Bearer " + me.token } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) {}
+  if (res.status === 401 && me) { showLogin("Your session ended. Please log in again."); throw new Error("Logged out"); }
+  if (!res.ok) {
+    const d = data && data.detail;
+    throw new Error(Array.isArray(d) ? d.map((x) => x.msg).join(", ") : d || "Something went wrong");
+  }
+  return data;
+}
+
+async function run(fn) {          // run an action and show any error as a toast
+  try { await fn(); } catch (e) { if (e.message !== "Logged out") toast(e.message, true); }
+}
+
+// ---------------- Login / logout ----------------
+function showLogin(msg = "") {
+  me = null; store("admin_session", null);
+  clearInterval(refreshTimer);
+  $("app").classList.add("hidden");
+  $("login").classList.remove("hidden");
+  $("login-error").textContent = msg;
+}
+
+async function showApp() {
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("uname").textContent = me.username;
+  $("urole").textContent = me.role;
+  const isAdmin = me.role === "admin";
+  document.querySelectorAll("[data-admin]").forEach((el) => el.classList.toggle("hidden", !isAdmin));
+  $("disc-hint").textContent = isAdmin ? "Admins can give up to 50% off." : "Staff can give up to 20% off.";
+  $("settings-note").textContent = isAdmin ? "" : "Only an admin can change these details.";
+  $("set-name").readOnly = $("set-info").readOnly = !isAdmin;
+  run(async () => {
+    const s = await api("/staff/settings");
+    $("rname").textContent = s.restaurant_name;
+  });
+  openTab("orders");
+}
+
+$("login-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  $("login-error").textContent = "";
+  run(async () => {
+    try {
+      const r = await api("/staff/login", "POST", { username: $("lu").value.trim(), password: $("lp").value });
+      me = { token: r.access_token, username: r.username, role: r.role };
+      store("admin_session", JSON.stringify(me));
+      $("lp").value = "";
+      showApp();
+    } catch (err) { $("login-error").textContent = err.message; }
+  });
+});
+
+$("logout").addEventListener("click", () => run(async () => {
+  try { await api("/staff/logout", "POST"); } finally { showLogin("You have logged out."); }
+}));
+
+// ---------------- Tabs ----------------
+const loaders = { orders: loadOrders, bookings: loadBookings, menu: loadMenu,
+                  discounts: loadDiscounts, staff: loadStaff, settings: loadSettings };
+
+function openTab(name) {
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== name));
+  clearInterval(refreshTimer);
+  if (name === "orders") refreshTimer = setInterval(() => run(loadOrders), 20000);
+  run(loaders[name]);
+}
+document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => openTab(b.dataset.tab)));
+
+// ---------------- Orders ----------------
+const STATUSES = ["new", "preparing", "served", "paid", "cancelled"];
+
+async function loadOrders() {
+  const { orders } = await api("/staff/orders");
+  $("orders-body").innerHTML = orders.length ? orders.map((o) => `
+    <tr>
+      <td><strong>${esc(o.session_id)}</strong></td>
+      <td><ul class="items">${Object.entries(o.cart).map(([d, q]) => `<li>${esc(q)} x ${esc(d)}</li>`).join("")}</ul></td>
+      <td class="num"><strong>${rs(o.total)}</strong>${o.discount ? `<div class="muted">-${rs(o.discount)} (${esc(o.discount_code)})</div>` : ""}</td>
+      <td><select data-sid="${esc(o.session_id)}" class="status-select">
+        ${STATUSES.map((s) => `<option ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}</select></td>
+      <td class="muted">${esc((o.updated_at || "").replace("T", " "))}</td>
+      <td><button class="small danger" data-remove="${esc(o.session_id)}">Remove customer</button></td>
+    </tr>`).join("") : `<tr><td colspan="6" class="empty">No orders yet.</td></tr>`;
+
+  document.querySelectorAll(".status-select").forEach((sel) => sel.addEventListener("change", () => run(async () => {
+    await api(`/staff/orders/${encodeURIComponent(sel.dataset.sid)}/status`, "PUT", { status: sel.value });
+    toast(`${sel.dataset.sid}: ${sel.value}`);
+  })));
+  document.querySelectorAll("[data-remove]").forEach((btn) => btn.addEventListener("click", () => {
+    const sid = btn.dataset.remove;
+    if (!confirm(`Remove ${sid}'s chat, order, booking and discount? This cannot be undone.`)) return;
+    run(async () => { await api(`/staff/customers/${encodeURIComponent(sid)}`, "DELETE"); toast(`${sid} removed`); loadOrders(); });
+  }));
+}
+
+// ---------------- Bookings ----------------
+async function loadBookings() {
+  const { bookings } = await api("/staff/bookings");
+  $("bookings-body").innerHTML = bookings.length ? bookings.map((b) => `
+    <tr><td><strong>${esc(b.name)}</strong></td><td>${esc(b.people)}</td><td>${esc(b.date)}</td>
+      <td>${esc(b.time)}</td><td class="muted">${esc(b.session_id)}</td>
+      <td><button class="small danger" data-cancel="${esc(b.session_id)}">Cancel</button></td></tr>`).join("")
+    : `<tr><td colspan="6" class="empty">No bookings yet.</td></tr>`;
+  document.querySelectorAll("[data-cancel]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!confirm("Cancel this booking?")) return;
+    run(async () => { await api(`/staff/bookings/${encodeURIComponent(btn.dataset.cancel)}`, "DELETE"); toast("Booking cancelled"); loadBookings(); });
+  }));
+}
+
+// ---------------- Menu ----------------
+async function loadMenu() {
+  menuRows = await api("/staff/menu");
+  const cats = [...new Set(menuRows.map((r) => r.category))];
+  $("cats").innerHTML = cats.map((c) => `<option value="${esc(c)}">`).join("");
+  renderMenu();
+}
+
+function renderMenu() {
+  const q = $("menu-search").value.trim().toLowerCase();
+  const rows = menuRows.filter((r) => !q || r.dish.toLowerCase().includes(q) || r.category.toLowerCase().includes(q));
+  $("menu-count").textContent = `(${menuRows.length} dishes)`;
+  const isAdmin = me.role === "admin";
+  let html = "", lastCat = null;
+  for (const r of rows) {
+    if (r.category !== lastCat) { html += `<tr class="cat"><td colspan="4">${esc(r.category)}</td></tr>`; lastCat = r.category; }
+    html += `<tr class="${r.available ? "" : "off"}">
+      <td>${esc(r.dish)}</td><td class="num">${rs(r.price)}</td>
+      <td><label class="muted"><input type="checkbox" data-avail="${esc(r.dish)}" ${r.available ? "checked" : ""}>
+        ${r.available ? "Yes" : "Sold out"}</label></td>
+      <td>${isAdmin ? `<div class="actions"><button class="small" data-edit="${esc(r.dish)}">Edit</button>
+        <button class="small danger" data-del="${esc(r.dish)}">Delete</button></div>` : ""}</td></tr>`;
+  }
+  $("menu-body").innerHTML = html || `<tr><td colspan="4" class="empty">No dishes found.</td></tr>`;
+
+  document.querySelectorAll("[data-avail]").forEach((cb) => cb.addEventListener("change", () => run(async () => {
+    await api(`/staff/menu/${encodeURIComponent(cb.dataset.avail)}/availability`, "PATCH", { available: cb.checked });
+    toast(`${cb.dataset.avail}: ${cb.checked ? "available" : "sold out"}`);
+    loadMenu();
+  })));
+  document.querySelectorAll("[data-edit]").forEach((btn) => btn.addEventListener("click", () => {
+    const r = menuRows.find((x) => x.dish === btn.dataset.edit);
+    $("m-dish").value = r.dish; $("m-cat").value = r.category; $("m-price").value = r.price;
+    $("m-avail").checked = !!r.available;
+    $("menu-form-title").textContent = "Edit: " + r.dish;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }));
+  document.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!confirm(`Delete ${btn.dataset.del} from the menu?`)) return;
+    run(async () => { await api(`/staff/menu/${encodeURIComponent(btn.dataset.del)}`, "DELETE"); toast("Dish deleted"); loadMenu(); });
+  }));
+}
+
+function resetMenuForm() {
+  $("menu-form").reset(); $("m-avail").checked = true;
+  $("menu-form-title").textContent = "Add or edit a dish";
+}
+
+$("menu-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  run(async () => {
+    const r = await api("/staff/menu", "PUT", {
+      dish: $("m-dish").value.trim(), category: $("m-cat").value.trim(),
+      price: Number($("m-price").value), available: $("m-avail").checked,
+    });
+    toast(r.message); resetMenuForm(); loadMenu();
+  });
+});
+
+// ---------------- Discounts ----------------
+async function loadDiscounts() {
+  const codes = await api("/staff/discounts");
+  const isAdmin = me.role === "admin";
+  $("disc-body").innerHTML = codes.length ? codes.map((c) => `
+    <tr><td class="code">${esc(c.code)}</td><td class="num">${esc(c.percent)}%</td>
+      <td class="num">${esc(c.uses_left)}</td><td class="muted">${esc(c.created_by)}</td>
+      <td>${isAdmin ? `<button class="small danger" data-dcode="${esc(c.code)}">Delete</button>` : ""}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">No discount codes yet.</td></tr>`;
+  document.querySelectorAll("[data-dcode]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!confirm(`Delete code ${btn.dataset.dcode}?`)) return;
+    run(async () => { await api(`/staff/discounts/${encodeURIComponent(btn.dataset.dcode)}`, "DELETE"); toast("Code deleted"); loadDiscounts(); });
+  }));
+}
+
+$("disc-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  run(async () => {
+    const r = await api("/staff/discounts", "POST", { percent: Number($("d-pct").value), max_uses: Number($("d-uses").value) });
+    const box = $("new-code");
+    box.innerHTML = `New code: <span class="code">${esc(r.code)}</span> - ${esc(r.percent)}% off, ${esc(r.uses_left)} use(s). Give this to the customer.`;
+    box.classList.remove("hidden");
+    $("disc-form").reset(); $("d-uses").value = 1;
+    loadDiscounts();
+  });
+});
+
+// ---------------- Staff (admin) ----------------
+async function loadStaff() {
+  if (me.role !== "admin") return;
+  const users = await api("/staff/users");
+  $("staff-body").innerHTML = users.map((u) => {
+    const self = u.username === me.username;
+    return `<tr><td><strong>${esc(u.username)}</strong>${self ? ' <span class="muted">(you)</span>' : ""}</td>
+      <td><select data-urole="${esc(u.username)}" ${self ? "disabled" : ""}>
+        <option ${u.role === "staff" ? "selected" : ""}>staff</option>
+        <option ${u.role === "admin" ? "selected" : ""}>admin</option></select></td>
+      <td><div class="actions"><button class="small" data-pw="${esc(u.username)}">Reset password</button>
+        ${self ? "" : `<button class="small danger" data-udel="${esc(u.username)}">Delete</button>`}</div></td></tr>`;
+  }).join("");
+
+  document.querySelectorAll("[data-urole]").forEach((sel) => sel.addEventListener("change", () => run(async () => {
+    await api(`/staff/users/${encodeURIComponent(sel.dataset.urole)}`, "PUT", { role: sel.value });
+    toast(`${sel.dataset.urole} is now ${sel.value}`);
+  })));
+  document.querySelectorAll("[data-pw]").forEach((btn) => btn.addEventListener("click", () => {
+    const pw = prompt(`New password for ${btn.dataset.pw} (at least 6 characters):`);
+    if (!pw) return;
+    run(async () => { await api(`/staff/users/${encodeURIComponent(btn.dataset.pw)}`, "PUT", { password: pw }); toast("Password changed"); });
+  }));
+  document.querySelectorAll("[data-udel]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!confirm(`Delete staff account ${btn.dataset.udel}?`)) return;
+    run(async () => { await api(`/staff/users/${encodeURIComponent(btn.dataset.udel)}`, "DELETE"); toast("Account deleted"); loadStaff(); });
+  }));
+}
+
+$("staff-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  run(async () => {
+    const r = await api("/staff/users", "POST", { username: $("s-user").value.trim(), password: $("s-pass").value, role: $("s-role").value });
+    toast(r.message); $("staff-form").reset(); loadStaff();
+  });
+});
+
+// ---------------- Settings ----------------
+async function loadSettings() {
+  const s = await api("/staff/settings");
+  $("set-name").value = s.restaurant_name;
+  $("set-info").value = s.restaurant_info;
+}
+
+$("settings-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  run(async () => {
+    await api("/staff/settings", "PUT", { restaurant_name: $("set-name").value.trim(), restaurant_info: $("set-info").value });
+    $("rname").textContent = $("set-name").value.trim();
+    toast("Settings saved");
+  });
+});
+
+// ---------------- Start ----------------
+(async () => {
+  const saved = load("admin_session");
+  if (!saved) return showLogin();
+  try { me = JSON.parse(saved); } catch (e) { return showLogin(); }
+  try { await api("/staff/me"); showApp(); } catch (e) { showLogin(); }
+})();
+</script>
+</body>
+</html>
