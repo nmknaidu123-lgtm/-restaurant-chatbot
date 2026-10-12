@@ -63,6 +63,38 @@ def save_order(session_id: str, cart: dict) -> None:
         )
 
 
+def add_order_notes(session_id: str, new_notes: dict, order_note: str = "") -> None:
+    """Add special requests to an existing order.
+    new_notes = {"Chicken Biryani": ["1 x Mild, for kids"]}  (one entry per line ordered)"""
+    if not new_notes and not order_note:
+        return
+    with db() as conn:
+        row = conn.execute("SELECT notes, order_note FROM orders WHERE session_id = ?",
+                           (session_id,)).fetchone()
+        if row is None:
+            return
+        notes = json.loads(row["notes"]) if row["notes"] else {}
+        for dish, lines in new_notes.items():
+            notes.setdefault(dish, []).extend(lines)
+        note = row["order_note"] or ""
+        if order_note:
+            note = f"{note} | {order_note}" if note else order_note
+        conn.execute("UPDATE orders SET notes = ?, order_note = ? WHERE session_id = ?",
+                     (json.dumps(notes), note, session_id))
+
+
+def describe_request(spice: str | None, for_kids: bool, note: str) -> str:
+    """Turn the options into one short line for the kitchen, e.g. 'Mild, for baby/kids, no onion'."""
+    parts = []
+    if spice:
+        parts.append(spice)
+    if for_kids:
+        parts.append("for baby/kids (no chilli, less salt)")
+    if note and note.strip():
+        parts.append(note.strip())
+    return ", ".join(parts)
+
+
 def get_order_status(session_id: str) -> str | None:
     with db() as conn:
         row = conn.execute("SELECT status FROM orders WHERE session_id = ?", (session_id,)).fetchone()

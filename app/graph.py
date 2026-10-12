@@ -42,6 +42,7 @@ class RestaurantState(TypedDict, total=False):
     cart: dict
     booking: dict
     awaiting_booking: bool
+    new_notes: dict          # special requests from THIS message only (saved by main.py)
 
 
 class Intent(BaseModel):
@@ -51,6 +52,10 @@ class Intent(BaseModel):
 class OrderItem(BaseModel):
     name: str = Field(description="Exact dish name from the menu")
     quantity: int
+    request: Optional[str] = Field(
+        default=None,
+        description="Special request for THIS dish only, short: spice level (mild, medium, spicy, "
+                    "extra spicy), 'for baby/kids', 'no onion', etc. Empty if none.")
 
 
 class Order(BaseModel):
@@ -95,18 +100,26 @@ def take_order(state: RestaurantState) -> RestaurantState:
     order = llm.with_structured_output(Order).invoke(
         f"Menu: {list(menu.keys())}\n"
         "Extract dishes and quantities. Use exact menu names. Ignore items not on the menu.\n"
+        "If the customer asks for something special for a dish (spice level, for a baby or child, "
+        "no onion, less oil...), put it in that dish's request.\n"
         f"Customer: {state['user_input']}"
     )
     cart = dict(state.get("cart") or {})
-    added = []
+    added, notes = [], {}
     for item in order.items:
         if item.name in menu and item.quantity > 0:
             cart[item.name] = cart.get(item.name, 0) + item.quantity
-            added.append(f"{item.quantity} x {item.name}")
+            line = f"{item.quantity} x {item.name}"
+            request = (item.request or "").strip()[:100]
+            if request:
+                notes.setdefault(item.name, []).append(f"{item.quantity} x {request}")
+                line += f" ({request})"
+            added.append(line)
     if not added:
         return {"reply": "Sorry, I couldn't find those dishes on our menu. Ask for the menu to see it."}
     total = calculate_bill(state.get("session_id", ""), cart)["total"]
-    return {"cart": cart, "reply": f"Added: {', '.join(added)}. Current total: Rs. {total}"}
+    return {"cart": cart, "new_notes": notes,
+            "reply": f"Added: {', '.join(added)}. Current total: Rs. {total}"}
 
 
 def book_table(state: RestaurantState) -> RestaurantState:

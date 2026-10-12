@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from app.database import db, init_db, new_password_record
 from app.data import (get_setting, set_setting, get_menu, get_menu_by_category, get_menu_full,
                       get_order_cart, save_order, get_order_status, save_booking, get_booking,
+                      add_order_notes, describe_request,
                       get_events)
 from app.graph import bot, session_state, clear_session
 from app.discounts import generate_code, list_codes, delete_code, apply_code, calculate_bill
@@ -65,7 +66,7 @@ def menu():
 @api.post("/chat", response_model=ChatResponse, tags=["Customer"])
 def chat(req: ChatRequest):
     config = {"configurable": {"thread_id": req.session_id}}
-    inputs = {"user_input": req.message, "session_id": req.session_id}
+    inputs = {"user_input": req.message, "session_id": req.session_id, "new_notes": {}}
     # After a server restart the chatbot's memory is empty - reload the saved cart
     if not session_state(req.session_id).get("cart"):
         saved_cart = get_order_cart(req.session_id)
@@ -76,6 +77,7 @@ def chat(req: ChatRequest):
 
     if result.get("cart"):
         save_order(req.session_id, result["cart"])
+        add_order_notes(req.session_id, result.get("new_notes") or {})
     if result.get("booking") and not result.get("awaiting_booking"):
         save_booking(req.session_id, result["booking"])
     return ChatResponse(session_id=req.session_id, intent=result["intent"], reply=result["reply"])
@@ -122,7 +124,10 @@ def all_orders(staff: dict = Depends(current_staff)):
     for r in rows:
         cart = json.loads(r["cart"])
         orders.append({"session_id": r["session_id"], "cart": cart, "status": r["status"],
-                       "updated_at": r["updated_at"], **calculate_bill(r["session_id"], cart)})
+                       "updated_at": r["updated_at"],
+                       "notes": json.loads(r["notes"]) if r["notes"] else {},
+                       "order_note": r["order_note"] or "",
+                       **calculate_bill(r["session_id"], cart)})
     return {"count": len(orders), "orders": orders}
 
 
@@ -143,12 +148,17 @@ def update_status(session_id: str, body: StatusUpdate, staff: dict = Depends(cur
 class OrderLine(BaseModel):
     dish: str = Field(min_length=1, max_length=60, examples=["Chicken Biryani"])
     quantity: int = Field(ge=1, le=100, examples=[2])
+    spice: Optional[Literal["Mild", "Medium", "Spicy", "Extra spicy"]] = None
+    for_kids: bool = Field(default=False, description="For a baby / child: no chilli, less salt")
+    note: str = Field(default="", max_length=100, examples=["no onion"])
 
 
 class StaffOrder(BaseModel):
     customer: str = Field(min_length=1, max_length=40, examples=["Table 5"],
                           description="Table number or customer name")
     items: list[OrderLine] = Field(min_length=1, max_length=50)
+    order_note: str = Field(default="", max_length=200, examples=["Serve starters first"],
+                            description="A note for the whole order")
 
 
 @api.post("/staff/orders", tags=["Staff - Orders"])
@@ -172,9 +182,14 @@ def take_order(body: StaffOrder, staff: dict = Depends(current_staff)):
         row = None
 
     cart = json.loads(row["cart"]) if row else {}
+    notes: dict[str, list[str]] = {}
     for line in body.items:
         cart[line.dish] = cart.get(line.dish, 0) + line.quantity
+        request = describe_request(line.spice, line.for_kids, line.note)
+        if request:
+            notes.setdefault(line.dish, []).append(f"{line.quantity} x {request}")
     save_order(session_id, cart)
+    add_order_notes(session_id, notes, body.order_note.strip())
     return {"message": f"Order saved for {body.customer.strip()}", "session_id": session_id,
             "cart": cart, **calculate_bill(session_id, cart), "taken_by": staff["username"]}
 

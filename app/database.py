@@ -116,6 +116,11 @@ def init_db() -> None:
         order_cols = {r["name"] for r in conn.execute("PRAGMA table_info(orders)")}
         if "paid_at" not in order_cols:
             conn.execute("ALTER TABLE orders ADD COLUMN paid_at TEXT")
+        # Special requests: per-dish notes (spice level, for kids...) and one note for the whole order
+        if "notes" not in order_cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN notes TEXT")
+        if "order_note" not in order_cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT")
 
         # Phone number for bookings taken over the phone (added later - safe on old databases)
         booking_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bookings)")}

@@ -91,6 +91,9 @@
   .col-labels span { flex: 1; text-align: center; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
   .hbar-track { background: var(--bg); border-radius: 4px; height: 10px; width: 100%; min-width: 80px; }
   .hbar { background: var(--brand); height: 10px; border-radius: 0 4px 4px 0; }
+  .req { display: inline-block; margin: 2px 0 0; padding: 1px 8px; border-radius: 99px; font-size: 13px;
+         background: #fff4d6; color: #7a4b00; border: 1px solid #f0d58a; }
+  .order-note { margin-top: 6px; font-size: 13px; color: #7a4b00; }
   .good { color: var(--ok); } .bad-text { color: var(--bad); }
   .tile.loss { background: var(--bad-soft); border-color: #f5c2bd; }
   .tile.gain { background: var(--ok-soft); border-color: #bfe0c9; }
@@ -154,10 +157,19 @@
         <form class="row" id="o-line-form" style="margin-top:8px">
           <input id="o-dish" placeholder="Dish (start typing)" list="o-dishes" required>
           <datalist id="o-dishes"></datalist>
-          <input id="o-qty" type="number" min="1" max="100" value="1" required style="flex:0 1 110px">
+          <input id="o-qty" type="number" min="1" max="100" value="1" required style="flex:0 1 110px" aria-label="Quantity">
+          <select id="o-spice" aria-label="Spice level" style="flex:0 1 160px">
+            <option value="">Spice: normal</option>
+            <option>Mild</option><option>Medium</option><option>Spicy</option><option>Extra spicy</option>
+          </select>
+          <label class="muted" style="white-space:nowrap"><input id="o-kids" type="checkbox"> For baby / kids</label>
+          <input id="o-note" placeholder="Note (e.g. no onion)" maxlength="100">
           <button type="submit">Add item</button>
         </form>
         <div id="o-lines" style="margin-top:12px"></div>
+        <div class="row" style="margin-top:8px">
+          <input id="o-order-note" placeholder="Note for the whole order (optional, e.g. serve starters first)" maxlength="200">
+        </div>
         <div class="row" style="margin-top:12px;justify-content:space-between">
           <strong id="o-total">Total: Rs. 0</strong>
           <div class="actions">
@@ -165,7 +177,7 @@
             <button class="primary" type="button" id="o-place">Place order</button>
           </div>
         </div>
-        <p class="muted">Same table again? New items are added to that table's open order.</p>
+        <p class="muted">Same table again? New items are added to that table's open order. "For baby / kids" tells the kitchen: no chilli, less salt.</p>
       </div>
       <div class="card">
         <div class="toolbar"><h2>Orders</h2><button class="small" onclick="loadOrders()">Refresh</button></div>
@@ -540,9 +552,13 @@ async function loadOrderMenu() {
   $("o-dishes").innerHTML = Object.keys(orderPrices).map((d) => `<option value="${esc(d)}">`).join("");
 }
 
+function requestText(l) {
+  return [l.spice, l.for_kids ? "for baby/kids" : "", l.note].filter(Boolean).join(", ");
+}
+
 function renderOrderLines() {
   $("o-lines").innerHTML = orderLines.length ? `<table><tbody>${orderLines.map((l, i) => `
-    <tr><td>${esc(l.quantity)} x ${esc(l.dish)}</td><td class="num">${rs(orderPrices[l.dish] * l.quantity)}</td>
+    <tr><td>${esc(l.quantity)} x ${esc(l.dish)}${requestText(l) ? `<br><span class="req">${esc(requestText(l))}</span>` : ""}</td><td class="num">${rs(orderPrices[l.dish] * l.quantity)}</td>
       <td style="width:1%"><button class="small danger" type="button" data-oline="${i}" aria-label="Remove ${esc(l.dish)}">Remove</button></td></tr>`).join("")}
     </tbody></table>` : '<p class="muted" style="margin:0">No items yet.</p>';
   const total = orderLines.reduce((sum, l) => sum + orderPrices[l.dish] * l.quantity, 0);
@@ -554,6 +570,7 @@ function renderOrderLines() {
 
 function clearOrderForm() {
   orderLines = []; $("o-customer").value = ""; $("o-dish").value = ""; $("o-qty").value = 1;
+  $("o-spice").value = ""; $("o-kids").checked = false; $("o-note").value = ""; $("o-order-note").value = "";
   renderOrderLines();
 }
 
@@ -564,9 +581,13 @@ $("o-line-form").addEventListener("submit", (e) => {
   const match = Object.keys(orderPrices).find((d) => d.toLowerCase() === dish.toLowerCase());
   if (!match) { toast("Pick a dish from the list (it may be sold out)", true); return; }
   if (!Number.isInteger(qty) || qty < 1) { toast("Quantity must be 1 or more", true); return; }
-  const existing = orderLines.find((l) => l.dish === match);
-  if (existing) existing.quantity += qty; else orderLines.push({ dish: match, quantity: qty });
-  $("o-dish").value = ""; $("o-qty").value = 1; $("o-dish").focus();
+  const line = { dish: match, quantity: qty, spice: $("o-spice").value || null,
+                 for_kids: $("o-kids").checked, note: $("o-note").value.trim() };
+  // same dish with the same request -> add to that line; a different request stays a separate line
+  const existing = orderLines.find((l) => l.dish === match && requestText(l) === requestText(line));
+  if (existing) existing.quantity += qty; else orderLines.push(line);
+  $("o-dish").value = ""; $("o-qty").value = 1; $("o-spice").value = ""; $("o-kids").checked = false;
+  $("o-note").value = ""; $("o-dish").focus();
   renderOrderLines();
 });
 
@@ -575,7 +596,7 @@ $("o-place").addEventListener("click", () => {
   if (!customer) { toast("Enter a table number or customer name", true); $("o-customer").focus(); return; }
   if (!orderLines.length) { toast("Add at least one item", true); return; }
   run(async () => {
-    const r = await api("/staff/orders", "POST", { customer, items: orderLines });
+    const r = await api("/staff/orders", "POST", { customer, items: orderLines, order_note: $("o-order-note").value.trim() });
     toast(`${r.message}. Total ${rs(r.total)}`);
     clearOrderForm(); loadOrders();
   });
@@ -595,7 +616,9 @@ async function loadOrders() {
   $("orders-body").innerHTML = orders.length ? orders.map((o) => `
     <tr>
       <td><strong>${esc(o.session_id)}</strong></td>
-      <td><ul class="items">${Object.entries(o.cart).map(([d, q]) => `<li>${esc(q)} x ${esc(d)}</li>`).join("")}</ul></td>
+      <td><ul class="items">${Object.entries(o.cart).map(([d, q]) => `<li>${esc(q)} x ${esc(d)}${
+        (o.notes && o.notes[d] ? o.notes[d] : []).map((n) => `<br><span class="req">${esc(n)}</span>`).join("")}</li>`).join("")}</ul>
+        ${o.order_note ? `<div class="order-note"><strong>Note:</strong> ${esc(o.order_note)}</div>` : ""}</td>
       <td class="num"><strong>${rs(o.total)}</strong>${o.discount ? `<div class="muted">-${rs(o.discount)} (${esc(o.discount_code)})</div>` : ""}</td>
       <td><select data-sid="${esc(o.session_id)}" class="status-select">
         ${STATUSES.map((s) => `<option ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}</select></td>
