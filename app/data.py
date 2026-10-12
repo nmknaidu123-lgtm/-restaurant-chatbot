@@ -119,29 +119,133 @@ def get_booking(session_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-# ---------------- Events ----------------
+# ---------------- Events (buffet catering) ----------------
+EVENT_STATUSES = ["Enquiry", "Confirmed", "Completed", "Cancelled"]
+
+
+def _json_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    return json.loads(value) if value else []
+
+
 def get_events(upcoming_only: bool = False) -> list[dict]:
-    """All events sorted by date. upcoming_only=True hides events whose date has passed."""
-    sql = "SELECT * FROM events"
+    """All events (for staff) sorted by date, with money totals.
+    upcoming_only=True hides events whose date has passed."""
+    sql = ("SELECT e.*, COALESCE((SELECT SUM(amount) FROM event_payments p WHERE p.event_id = e.id), 0) "
+           "AS payments_total FROM events e")
     params: tuple = ()
     if upcoming_only:
-        sql += " WHERE date >= ?"
+        sql += " WHERE e.date >= ?"
         params = (datetime.now().date().isoformat(),)
     with db() as conn:
-        return [event_totals(dict(r)) for r in conn.execute(sql + " ORDER BY date, time", params)]
+        return [event_totals(dict(r)) for r in conn.execute(sql + " ORDER BY e.date, e.time", params)]
+
+
+def get_event(event_id: int) -> dict | None:
+    return next((e for e in get_events() if e["id"] == event_id), None)
+
+
+def get_public_events() -> list[dict]:
+    """Upcoming events customers may see: marked public, and not an enquiry or cancelled.
+    Only the name, date, time and description - never prices, guests or phone numbers."""
+    return [{k: e[k] for k in ("title", "date", "time", "description")}
+            for e in get_events(upcoming_only=True)
+            if e.get("is_public") and e.get("status") in ("Confirmed", "Completed")]
 
 
 def event_totals(e: dict) -> dict:
-    """Add the money totals to one event.
-    bill       = plates x price per head        (what the customer pays)
-    investment = plates x cost per head + extra (what it costs us)
+    """Add the money totals to one buffet event.
+    bill       = veg guests x veg price + non-veg guests x non-veg price + extra charges
+    investment = veg guests x veg cost  + non-veg guests x non-veg cost  + extra costs
     profit     = bill - investment
-    balance    = bill - advance                 (still to collect)"""
-    menu = e.get("menu")
-    e["menu"] = json.loads(menu) if isinstance(menu, str) and menu else (menu or [])
-    plates = e.get("guests") or 0
-    bill = plates * (e.get("price_per_head") or 0)
-    investment = plates * (e.get("cost_per_head") or 0) + (e.get("extra_cost") or 0)
-    e.update(total_bill=bill, investment=investment, profit=bill - investment,
-             balance=max(bill - (e.get("advance") or 0), 0))
+    paid       = all payments (advance and later payments)
+    balance    = bill - paid  (still to collect)"""
+    for key in ("veg_items", "nonveg_items", "menu"):
+        e[key] = _json_list(e.get(key))
+    veg, nonveg = e.get("veg_guests") or 0, e.get("nonveg_guests") or 0
+    food_bill = veg * (e.get("veg_price") or 0) + nonveg * (e.get("nonveg_price") or 0)
+    food_cost = veg * (e.get("veg_cost") or 0) + nonveg * (e.get("nonveg_cost") or 0)
+    bill = food_bill + (e.get("extra_charges") or 0)
+    investment = food_cost + (e.get("extra_cost") or 0)
+    paid = (e.get("payments_total") or 0) + (e.get("advance") or 0)
+    e.update(guests=veg + nonveg, food_bill=food_bill, total_bill=bill, investment=investment,
+             profit=bill - investment, paid=paid, balance=max(bill - paid, 0))
     return e
+
+
+def get_event_payments(event_id: int) -> list[dict]:
+    with db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM event_payments WHERE event_id = ? ORDER BY date, id", (event_id,))]
+
+
+# ---------------- Buffet packages ----------------
+def get_packages() -> list[dict]:
+    with db() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM event_packages ORDER BY food_type DESC, price_per_head")]
+    for r in rows:
+        r["items"] = _json_list(r["items"])
+    return rows
+
+
+# ---------------- Kitchen plan for a buffet ----------------
+# How much ONE guest eats from each course in a buffet (all items of that course together).
+# These are common caterer starting points - adjust from your own experience.
+COURSES = [
+    ("Starters", ("Veg Starters", "Non-Veg Starters"), 100, "g"),
+    ("Soup", ("Soups",), 150, "ml"),
+    ("Main course", ("Veg Curries", "Non-Veg Curries"), 150, "g"),
+    ("Rice / Biryani", ("Biryani", "Rice and Noodles"), 250, "g"),
+    ("Breads", ("Breads",), 2, "pcs"),
+    ("South Indian", ("South Indian",), 2, "pcs"),
+    ("Dessert", ("Desserts",), 100, "g"),
+    ("Drinks", ("Hot Drinks", "Cold Drinks", "Lassi", "Fresh Juices", "Milkshakes", "Mocktails"), 200, "ml"),
+]
+OTHER_COURSE = ("Other", (), 100, "g")
+BUFFER = 1.10            # cook 10% extra so the buffet does not run out
+
+
+def _course_of(category: str):
+    return next((c for c in COURSES if category in c[1]), OTHER_COURSE)
+
+
+def _amount(value: float, unit: str) -> str:
+    if unit == "pcs":
+        return f"{int(-(-value // 1))} pcs"
+    big, small = ("kg", "g") if unit == "g" else ("litres", "ml")
+    return f"{value / 1000:.1f} {big}" if value >= 1000 else f"{int(round(value))} {small}"
+
+
+def kitchen_plan(e: dict) -> dict:
+    """Estimate how much of each dish to cook for a buffet event.
+    For every guest group, each course's per-guest amount is shared between the dishes of that
+    course: share = amount / n x (1 + 0.1 x (n - 1))  - with more choices people take a little more.
+    Then 10% extra is added. If a dish is in both groups, the amounts are added together."""
+    category = {r["dish"]: r["category"] for r in get_menu_full()}
+    totals: dict[str, dict] = {}
+    for guests, items in ((e.get("veg_guests") or 0, e.get("veg_items") or []),
+                          (e.get("nonveg_guests") or 0, e.get("nonveg_items") or [])):
+        if not guests or not items:
+            continue
+        by_course: dict[str, list] = {}
+        for dish in items:
+            course = _course_of(category.get(dish, ""))
+            by_course.setdefault(course[0], [course, []])[1].append(dish)
+        for (name, _, per_guest, unit), dishes in by_course.values():
+            n = len(dishes)
+            share = per_guest / n * (1 + 0.1 * (n - 1))
+            for dish in dishes:
+                row = totals.setdefault(dish, {"dish": dish, "course": name, "unit": unit, "value": 0.0, "guests": 0})
+                row["value"] += guests * share * BUFFER
+                row["guests"] += guests
+
+    order = [c[0] for c in COURSES] + ["Other"]
+    items = sorted(totals.values(), key=lambda r: (order.index(r["course"]), r["dish"]))
+    for r in items:
+        r["quantity"] = _amount(r.pop("value"), r["unit"])
+    guests = (e.get("veg_guests") or 0) + (e.get("nonveg_guests") or 0)
+    staff = {"waiters": -(-guests // 25), "cooks": max(1, -(-guests // 60)) if guests else 0,
+             "helpers": -(-guests // 40)}
+    return {"items": items, "guests": guests, "staff": staff,
+            "note": "Estimates for a buffet, with 10% extra. Adjust from your own experience."}

@@ -109,6 +109,20 @@
   .picked span { background: var(--brand-soft); color: var(--brand-dark); border-radius: 99px; padding: 2px 4px 2px 10px; font-size: 13px; }
   .picked button { border: 0; background: none; padding: 0 6px; color: var(--brand-dark); }
   .ev-menu { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
+  .group { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .group h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .vtag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .vtag::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor;
+                  box-shadow: inset 0 0 0 2px #fff; background: currentColor; }
+  .vtag.veg { color: #1f7a3a; } .vtag.nonveg { color: #8f2d14; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .pill.Enquiry { background: #fff4d6; color: #7a4b00; } .pill.Confirmed { background: #e6f0fb; color: #1d4f86; }
+  .pill.Completed { background: var(--ok-soft); color: var(--ok); } .pill.Cancelled { background: #eee; color: #666; }
+  .pkg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .pkg { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .pkg .price { font-size: 20px; font-weight: 600; }
+  .breakdown td { padding: 6px 8px; }
   .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; font-size: 13px; }
   .cat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .cat-chips button { border-radius: 99px; padding: 6px 12px; font-size: 14px; }
@@ -360,6 +374,9 @@
           <input id="m-cat" placeholder="Category" list="cats" required maxlength="40">
           <datalist id="cats"></datalist>
           <input id="m-price" type="number" min="1" placeholder="Price (Rs.)" required>
+          <select id="m-veg" aria-label="Veg or non-veg" style="flex:0 1 170px">
+            <option value="">Type: guess from name</option><option value="1">Veg</option><option value="0">Non-veg</option>
+          </select>
           <label class="muted"><input id="m-avail" type="checkbox" checked> Available</label>
           <button class="primary" type="submit">Save dish</button>
           <button type="button" onclick="resetMenuForm()">Clear</button>
@@ -398,59 +415,119 @@
       </div>
     </div>
 
-    <!-- Events -->
+    <!-- Events (buffet catering) -->
     <div data-panel="events" class="hidden">
       <div class="card" style="background:var(--brand-soft);border-color:#f0cdb9">
         <h2 style="margin-bottom:4px">Today</h2>
         <p id="today-summary" style="margin:0;font-size:18px">Loading...</p>
       </div>
       <div class="tiles" id="event-tiles"></div>
+
+      <!-- Event details (opens when you click "Open") -->
+      <div class="card hidden" id="ev-detail"></div>
+
+      <!-- Add / edit an event -->
       <div class="card">
         <h2 id="event-form-title">Add an event</h2>
-        <form id="event-form" style="display:flex;flex-direction:column;gap:8px">
+        <form id="event-form" style="display:flex;flex-direction:column;gap:10px">
           <div class="row">
-            <input id="e-title" placeholder="Event name (e.g. Birthday party)" required maxlength="80">
+            <input id="e-title" placeholder="Event name (e.g. Ravi's birthday)" required maxlength="80" style="flex:2 1 220px">
+            <select id="e-type" aria-label="Event type"></select>
+            <select id="e-status" aria-label="Status"></select>
             <input id="e-date" type="date" required aria-label="Date">
-            <input id="e-time" placeholder="Time (e.g. 8 PM)" maxlength="30">
+            <input id="e-time" placeholder="Time (e.g. 7 PM)" maxlength="30">
           </div>
           <div class="row">
-            <input id="e-customer" placeholder="Customer name (optional)" maxlength="60">
-            <input id="e-phone" placeholder="Phone (optional)" maxlength="20" inputmode="tel">
-            <input id="e-desc" placeholder="Short description (optional)" maxlength="500">
+            <input id="e-customer" placeholder="Customer name" maxlength="60">
+            <input id="e-phone" placeholder="Phone" maxlength="20" inputmode="tel">
+            <input id="e-desc" placeholder="Notes (hall, decoration, timing...)" maxlength="500" style="flex:2 1 220px">
           </div>
-          <div class="row">
-            <label class="field"><span class="muted">Plates / guests</span><input id="e-guests" type="number" min="0" max="10000" value="0"></label>
-            <label class="field"><span class="muted">Price per head (Rs.)</span><input id="e-price" type="number" min="0" value="0"></label>
-            <label class="field"><span class="muted">Cost per head (Rs.)</span><input id="e-cost" type="number" min="0" value="0"></label>
-            <label class="field"><span class="muted">Extra costs (Rs.)</span><input id="e-extra" type="number" min="0" value="0" title="Decoration, music, hall..."></label>
-            <label class="field"><span class="muted">Advance paid (Rs.)</span><input id="e-advance" type="number" min="0" value="0"></label>
-          </div>
-          <div class="menu-picker">
-            <div class="row" style="justify-content:space-between">
-              <strong>Event menu <span class="muted" id="ev-menu-count">(no dishes yet)</span></strong>
+          <label class="muted"><input id="e-public" type="checkbox"> Show to customers in the chatbot (only for public events like a music night - never private parties)</label>
+
+          <div class="groups">
+            <div class="group" id="grp-veg">
+              <h3><span class="vtag veg">Veg</span> guests</h3>
               <div class="row">
-                <select id="ev-menu-cat" aria-label="Category"><option value="">All categories</option></select>
-                <input id="ev-menu-search" placeholder="Search dishes..." aria-label="Search dishes">
+                <label class="field"><span class="muted">Veg guests</span><input id="veg-guests" type="number" min="0" max="10000" value="0"></label>
+                <label class="field"><span class="muted">Package</span><select id="veg-package"></select></label>
               </div>
+              <div class="row">
+                <label class="field"><span class="muted">Price per head (Rs.)</span><input id="veg-price" type="number" min="0" value="0"></label>
+                <label class="field"><span class="muted">Our cost per head (Rs.)</span><input id="veg-cost" type="number" min="0" value="0"></label>
+              </div>
+              <div class="row">
+                <select id="veg-cat" aria-label="Veg dish category"><option value="">All categories</option></select>
+                <input id="veg-search" placeholder="Search veg dishes...">
+              </div>
+              <div class="menu-grid" id="veg-grid"></div>
+              <div class="picked" id="veg-picked"></div>
             </div>
-            <div class="menu-grid" id="ev-menu-grid"></div>
-            <div class="picked" id="ev-menu-picked"></div>
-            <p class="muted" id="ev-menu-price" style="margin:8px 0 0"></p>
+            <div class="group" id="grp-nv">
+              <h3><span class="vtag nonveg">Non-veg</span> guests</h3>
+              <div class="row">
+                <label class="field"><span class="muted">Non-veg guests</span><input id="nv-guests" type="number" min="0" max="10000" value="0"></label>
+                <label class="field"><span class="muted">Package</span><select id="nv-package"></select></label>
+              </div>
+              <div class="row">
+                <label class="field"><span class="muted">Price per head (Rs.)</span><input id="nv-price" type="number" min="0" value="0"></label>
+                <label class="field"><span class="muted">Our cost per head (Rs.)</span><input id="nv-cost" type="number" min="0" value="0"></label>
+              </div>
+              <div class="row">
+                <select id="nv-cat" aria-label="Non-veg dish category"><option value="">All categories</option></select>
+                <input id="nv-search" placeholder="Search dishes...">
+              </div>
+              <div class="menu-grid" id="nv-grid"></div>
+              <div class="picked" id="nv-picked"></div>
+            </div>
           </div>
-          <p id="event-preview" class="muted" style="margin:0"></p>
+
+          <div class="row">
+            <label class="field"><span class="muted">Extra charges to customer (Rs.) - decoration, hall, music...</span><input id="e-extra-charges" type="number" min="0" value="0"></label>
+            <label class="field"><span class="muted">Our extra costs (Rs.) - decoration, hall, music...</span><input id="e-extra-cost" type="number" min="0" value="0"></label>
+          </div>
+          <div id="event-preview"></div>
           <div class="row">
             <button class="primary" type="submit" id="event-save">Add event</button>
             <button type="button" onclick="resetEventForm()">Clear</button>
           </div>
         </form>
-        <p class="muted">Price per head = what the customer pays per plate. Cost per head = your food cost per plate. Extra costs = decoration, music, hall and so on. Customers using the chatbot only see the event name, date, time and description.</p>
+        <p class="muted">Buffet: pick a package for each group (or tick your own dishes). Choosing a package fills in its price, cost and dishes - you can still change them. Payments are added after saving: click <strong>Open</strong> on the event.</p>
       </div>
+
+      <!-- Event list -->
       <div class="card">
-        <div class="toolbar"><h2>All events</h2><button class="small" onclick="loadEvents()">Refresh</button></div>
+        <div class="toolbar"><h2>Events</h2><button class="small" onclick="loadEvents()">Refresh</button></div>
+        <div class="cat-chips" id="ev-filter" role="group" aria-label="Show events"></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Event</th><th>Date</th><th class="num">Plates</th><th class="num">Per head</th><th class="num">Total bill</th><th class="num">Investment</th><th class="num">Profit</th><th class="num">Advance</th><th class="num">Balance</th><th></th></tr></thead>
+          <thead><tr><th>Event</th><th>Date</th><th>Guests</th><th class="num">Total bill</th><th class="num">Investment</th><th class="num">Profit</th><th class="num">Paid</th><th class="num">Balance</th><th></th></tr></thead>
           <tbody id="events-body"></tbody>
         </table></div>
+      </div>
+
+      <!-- Buffet packages -->
+      <div class="card">
+        <h2>Buffet packages</h2>
+        <div class="pkg-grid" id="pkg-list"></div>
+        <form id="pkg-form" data-admin style="display:flex;flex-direction:column;gap:8px;margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+          <h3 id="pkg-form-title" style="margin:0">Add a package</h3>
+          <div class="row">
+            <label class="field"><span class="muted">Package name</span><input id="pk-name" placeholder="e.g. Veg Gold" required maxlength="60"></label>
+            <label class="field"><span class="muted">Type</span><select id="pk-type"><option>Veg</option><option>Non-veg</option></select></label>
+            <label class="field"><span class="muted">Price per head (Rs.)</span><input id="pk-price" type="number" min="0" required></label>
+            <label class="field"><span class="muted">Our cost per head (Rs.)</span><input id="pk-cost" type="number" min="0" required></label>
+          </div>
+          <input id="pk-desc" placeholder="Short description (e.g. 2 starters, 2 curries, biryani, sweet)" maxlength="200">
+          <div class="row">
+            <select id="pk-cat" aria-label="Dish category"><option value="">All categories</option></select>
+            <input id="pk-search" placeholder="Search dishes...">
+          </div>
+          <div class="menu-grid" id="pk-grid"></div>
+          <div class="picked" id="pk-picked"></div>
+          <div class="row">
+            <button class="primary" type="submit" id="pk-save">Save package</button>
+            <button type="button" onclick="resetPackageForm()">Clear</button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -1019,7 +1096,7 @@ function renderMenu() {
   for (const r of rows) {
     if (r.category !== lastCat) { html += `<tr class="cat"><td colspan="4">${esc(r.category)}</td></tr>`; lastCat = r.category; }
     html += `<tr class="${r.available ? "" : "off"}">
-      <td>${esc(r.dish)}</td><td class="num">${rs(r.price)}</td>
+      <td>${esc(r.dish)} ${vtag(!!r.is_veg)}</td><td class="num">${rs(r.price)}</td>
       <td><label class="muted"><input type="checkbox" data-avail="${esc(r.dish)}" ${r.available ? "checked" : ""}>
         ${r.available ? "Yes" : "Sold out"}</label></td>
       <td>${isAdmin ? `<div class="actions"><button class="small" data-edit="${esc(r.dish)}">Edit</button>
@@ -1036,6 +1113,7 @@ function renderMenu() {
     const r = menuRows.find((x) => x.dish === btn.dataset.edit);
     $("m-dish").value = r.dish; $("m-cat").value = r.category; $("m-price").value = r.price;
     $("m-avail").checked = !!r.available;
+    $("m-veg").value = r.is_veg === null || r.is_veg === undefined ? "" : String(r.is_veg ? 1 : 0);
     $("menu-form-title").textContent = "Edit: " + r.dish;
     window.scrollTo({ top: 0, behavior: "smooth" });
   }));
@@ -1046,7 +1124,7 @@ function renderMenu() {
 }
 
 function resetMenuForm() {
-  $("menu-form").reset(); $("m-avail").checked = true;
+  $("menu-form").reset(); $("m-avail").checked = true; $("m-veg").value = "";
   $("menu-form-title").textContent = "Add or edit a dish";
 }
 
@@ -1056,6 +1134,7 @@ $("menu-form").addEventListener("submit", (e) => {
     const r = await api("/staff/menu", "PUT", {
       dish: $("m-dish").value.trim(), category: $("m-cat").value.trim(),
       price: Number($("m-price").value), available: $("m-avail").checked,
+      is_veg: $("m-veg").value === "" ? null : $("m-veg").value === "1",
     });
     toast(r.message); resetMenuForm(); loadMenu();
   });
@@ -1088,71 +1167,116 @@ $("disc-form").addEventListener("submit", (e) => {
   });
 });
 
-// ---------------- Events ----------------
-let eventRows = [];
-let editingEventId = null;
-let evMenuAll = [];          // full restaurant menu [{dish, price, category, available}]
-let evMenuPicked = [];       // dish names chosen for this event
+// ---------------- Events (buffet catering) ----------------
+const EVENT_TYPES = ["Birthday", "Wedding", "Engagement", "Corporate", "Get-together", "Festival / special night", "Other"];
+const EVENT_STATUSES = ["Enquiry", "Confirmed", "Completed", "Cancelled"];
+const PAY_METHODS = ["Cash", "UPI", "Card", "Bank transfer"];
 
-function renderEventMenu() {
-  const cat = $("ev-menu-cat").value, q = $("ev-menu-search").value.trim().toLowerCase();
-  const rows = evMenuAll.filter((r) => (!cat || r.category === cat) && (!q || r.dish.toLowerCase().includes(q)));
-  $("ev-menu-grid").innerHTML = rows.length ? rows.map((r) => `
-    <label><input type="checkbox" data-evdish="${esc(r.dish)}" ${evMenuPicked.includes(r.dish) ? "checked" : ""}>
-      <span>${esc(r.dish)}</span><span class="price">${rs(r.price)}</span></label>`).join("")
-    : '<p class="muted" style="margin:0">No dishes found.</p>';
-  document.querySelectorAll("[data-evdish]").forEach((cb) => cb.addEventListener("change", () => {
-    const d = cb.dataset.evdish;
-    evMenuPicked = cb.checked ? [...evMenuPicked, d] : evMenuPicked.filter((x) => x !== d);
-    renderPicked();
-  }));
-  renderPicked();
-}
-
-function renderPicked() {
-  $("ev-menu-count").textContent = evMenuPicked.length ? `(${evMenuPicked.length} dishes)` : "(no dishes yet)";
-  $("ev-menu-picked").innerHTML = evMenuPicked.map((d, i) =>
-    `<span>${esc(d)}<button type="button" data-unpick="${i}" aria-label="Remove ${esc(d)}">×</button></span>`).join("");
-  document.querySelectorAll("[data-unpick]").forEach((b) => b.addEventListener("click", () => {
-    evMenuPicked.splice(Number(b.dataset.unpick), 1);
-    renderEventMenu();
-  }));
-  const priceOf = Object.fromEntries(evMenuAll.map((r) => [r.dish, r.price]));
-  const perPlate = evMenuPicked.reduce((t, d) => t + (priceOf[d] || 0), 0);
-  $("ev-menu-price").innerHTML = evMenuPicked.length
-    ? `Menu price: <strong>${rs(perPlate)}</strong> per plate (1 portion of each dish). ` +
-      `<button type="button" class="small" id="use-menu-price">Use as price per head</button>`
-    : "Tick the dishes that will be served at this event.";
-  const btn = $("use-menu-price");
-  if (btn) btn.addEventListener("click", () => { $("e-price").value = perPlate; updateEventPreview(); });
-}
-
-$("ev-menu-cat").addEventListener("change", renderEventMenu);
-$("ev-menu-search").addEventListener("input", renderEventMenu);
-
+let eventRows = [], allDishes = [], packages = [];
+let editingEventId = null, openEventId = null, eventFilter = "Upcoming";
+let editingPackageId = null;
 const evNum = (id) => Number($(id).value || 0);
+const vtag = (isVeg) => `<span class="vtag ${isVeg ? "veg" : "nonveg"}">${isVeg ? "Veg" : "Non-veg"}</span>`;
+$("e-type").innerHTML = EVENT_TYPES.map((t) => `<option>${esc(t)}</option>`).join("");
+$("e-status").innerHTML = EVENT_STATUSES.map((t) => `<option ${t === "Confirmed" ? "selected" : ""}>${esc(t)}</option>`).join("");
 
-function eventFormTotals() {
-  const plates = evNum("e-guests"), bill = plates * evNum("e-price");
-  const investment = plates * evNum("e-cost") + evNum("e-extra");
-  return { bill, investment, profit: bill - investment, balance: Math.max(bill - evNum("e-advance"), 0) };
+// ----- A reusable dish picker (used for veg guests, non-veg guests and packages) -----
+function makePicker(prefix, vegOnly, onChange) {
+  const p = { picked: [] };
+  p.render = () => {
+    const onlyVeg = typeof vegOnly === "function" ? vegOnly() : vegOnly;
+    const cat = $(prefix + "-cat").value, q = $(prefix + "-search").value.trim().toLowerCase();
+    const rows = allDishes.filter((r) => (!onlyVeg || r.is_veg) && (!cat || r.category === cat) &&
+                                         (!q || r.dish.toLowerCase().includes(q)));
+    $(prefix + "-grid").innerHTML = rows.length ? rows.map((r) => `
+      <label><input type="checkbox" data-pick="${esc(r.dish)}" ${p.picked.includes(r.dish) ? "checked" : ""}>
+        <span>${esc(r.dish)}</span><span class="price">${rs(r.price)}</span></label>`).join("")
+      : '<p class="muted" style="margin:0">No dishes found.</p>';
+    $(prefix + "-grid").querySelectorAll("[data-pick]").forEach((cb) => cb.addEventListener("change", () => {
+      const d = cb.dataset.pick;
+      p.picked = cb.checked ? [...p.picked, d] : p.picked.filter((x) => x !== d);
+      p.renderPicked(); if (onChange) onChange();
+    }));
+    p.renderPicked();
+  };
+  p.renderPicked = () => {
+    $(prefix + "-picked").innerHTML = p.picked.length
+      ? p.picked.map((d, i) => `<span>${esc(d)}<button type="button" data-unpick="${i}" aria-label="Remove ${esc(d)}">×</button></span>`).join("")
+      : '<span style="background:none;color:var(--muted);padding:0">No dishes picked yet.</span>';
+    $(prefix + "-picked").querySelectorAll("[data-unpick]").forEach((b) => b.addEventListener("click", () => {
+      p.picked.splice(Number(b.dataset.unpick), 1); p.render(); if (onChange) onChange();
+    }));
+  };
+  p.fillCategories = () => {
+    const onlyVeg = typeof vegOnly === "function" ? vegOnly() : vegOnly;
+    const cur = $(prefix + "-cat").value;
+    const cats = [...new Set(allDishes.filter((r) => !onlyVeg || r.is_veg).map((r) => r.category))];
+    $(prefix + "-cat").innerHTML = `<option value="">All categories</option>` +
+      cats.map((c) => `<option ${c === cur ? "selected" : ""}>${esc(c)}</option>`).join("");
+  };
+  $(prefix + "-cat").addEventListener("change", p.render);
+  $(prefix + "-search").addEventListener("input", p.render);
+  return p;
+}
+
+const vegPicker = makePicker("veg", true, updateEventPreview);
+const nvPicker = makePicker("nv", false, updateEventPreview);
+const pkgPicker = makePicker("pk", () => $("pk-type").value === "Veg", null);
+$("pk-type").addEventListener("change", () => {
+  const veg = Object.fromEntries(allDishes.map((r) => [r.dish, r.is_veg]));
+  if ($("pk-type").value === "Veg") pkgPicker.picked = pkgPicker.picked.filter((d) => veg[d]);
+  pkgPicker.fillCategories(); pkgPicker.render();
+});
+
+// ----- Packages in the event form -----
+function fillPackageSelects() {
+  [["veg-package", "Veg"], ["nv-package", "Non-veg"]].forEach(([id, type]) => {
+    const cur = $(id).value;
+    $(id).innerHTML = `<option value="">Custom (pick dishes below)</option>` + packages.filter((p) => p.food_type === type)
+      .map((p) => `<option value="${esc(p.name)}" ${p.name === cur ? "selected" : ""}>${esc(p.name)} - ${rs(p.price_per_head)}/head</option>`).join("");
+  });
+}
+[["veg-package", "veg", vegPicker], ["nv-package", "nv", nvPicker]].forEach(([id, prefix, picker]) => {
+  $(id).addEventListener("change", () => {
+    const pkg = packages.find((p) => p.name === $(id).value);
+    if (!pkg) return;
+    $(prefix + "-price").value = pkg.price_per_head; $(prefix + "-cost").value = pkg.cost_per_head;
+    picker.picked = [...pkg.items]; picker.render(); updateEventPreview();
+  });
+});
+
+// ----- Live bill preview -----
+function formTotals() {
+  const vg = evNum("veg-guests"), ng = evNum("nv-guests");
+  const vegBill = vg * evNum("veg-price"), nvBill = ng * evNum("nv-price");
+  const bill = vegBill + nvBill + evNum("e-extra-charges");
+  const investment = vg * evNum("veg-cost") + ng * evNum("nv-cost") + evNum("e-extra-cost");
+  return { vg, ng, vegBill, nvBill, bill, investment, profit: bill - investment };
 }
 
 function updateEventPreview() {
-  const t = eventFormTotals();
-  $("event-preview").innerHTML = t.bill || t.investment
-    ? `Total bill <strong>${rs(t.bill)}</strong> · Investment <strong>${rs(t.investment)}</strong> · ` +
-      `${t.profit < 0 ? '<span class="bad-text">Loss' : '<span class="good">Profit'} <strong>${signedRs(t.profit)}</strong></span> · Balance to collect <strong>${rs(t.balance)}</strong>`
-    : "";
+  const t = formTotals();
+  if (!t.bill && !t.investment) { $("event-preview").innerHTML = ""; return; }
+  $("event-preview").innerHTML = `<table class="breakdown"><tbody>
+    ${t.vg ? `<tr><td>${vtag(true)} ${t.vg} guests × ${rs(evNum("veg-price"))}</td><td class="num">${rs(t.vegBill)}</td></tr>` : ""}
+    ${t.ng ? `<tr><td>${vtag(false)} ${t.ng} guests × ${rs(evNum("nv-price"))}</td><td class="num">${rs(t.nvBill)}</td></tr>` : ""}
+    ${evNum("e-extra-charges") ? `<tr><td>Extra charges</td><td class="num">${rs(evNum("e-extra-charges"))}</td></tr>` : ""}
+    <tr class="total"><td>Total bill (${t.vg + t.ng} guests)</td><td class="num">${rs(t.bill)}</td></tr>
+    <tr><td class="muted">Our investment (food cost + extra costs)</td><td class="num muted">${rs(t.investment)}</td></tr>
+    <tr><td>${t.profit < 0 ? "Loss" : "Profit"}</td><td class="num ${t.profit < 0 ? "bad-text" : "good"}"><strong>${signedRs(t.profit)}</strong></td></tr>
+  </tbody></table>`;
 }
-["e-guests", "e-price", "e-cost", "e-extra", "e-advance"].forEach((id) => $(id).addEventListener("input", updateEventPreview));
+["veg-guests", "veg-price", "veg-cost", "nv-guests", "nv-price", "nv-cost", "e-extra-charges", "e-extra-cost"]
+  .forEach((id) => $(id).addEventListener("input", updateEventPreview));
 
 function resetEventForm() {
   editingEventId = null;
-  evMenuPicked = []; $("ev-menu-search").value = ""; $("ev-menu-cat").value = "";
-  renderEventMenu();
   $("event-form").reset();
-  ["e-guests", "e-price", "e-cost", "e-extra", "e-advance"].forEach((id) => ($(id).value = 0));
+  $("e-status").value = "Confirmed";
+  ["veg-guests", "veg-price", "veg-cost", "nv-guests", "nv-price", "nv-cost", "e-extra-charges", "e-extra-cost"]
+    .forEach((id) => ($(id).value = 0));
+  vegPicker.picked = []; nvPicker.picked = [];
+  vegPicker.render(); nvPicker.render();
   $("event-form-title").textContent = "Add an event";
   $("event-save").textContent = "Add event";
   updateEventPreview();
@@ -1162,88 +1286,295 @@ function editEvent(id) {
   const e = eventRows.find((x) => x.id === id);
   if (!e) return;
   editingEventId = id;
-  $("e-title").value = e.title; $("e-date").value = e.date; $("e-time").value = e.time || "";
-  $("e-customer").value = e.customer || ""; $("e-phone").value = e.phone || ""; $("e-desc").value = e.description || "";
-  $("e-guests").value = e.guests || 0; $("e-price").value = e.price_per_head || 0; $("e-cost").value = e.cost_per_head || 0;
-  $("e-extra").value = e.extra_cost || 0; $("e-advance").value = e.advance || 0;
-  evMenuPicked = [...(e.menu || [])]; renderEventMenu();
+  const set = (elId, v) => ($(elId).value = v ?? "");
+  set("e-title", e.title); set("e-type", e.event_type || "Other"); set("e-status", e.status || "Confirmed");
+  set("e-date", e.date); set("e-time", e.time); set("e-customer", e.customer); set("e-phone", e.phone);
+  set("e-desc", e.description); $("e-public").checked = !!e.is_public;
+  set("veg-guests", e.veg_guests || 0); set("veg-price", e.veg_price || 0); set("veg-cost", e.veg_cost || 0);
+  set("nv-guests", e.nonveg_guests || 0); set("nv-price", e.nonveg_price || 0); set("nv-cost", e.nonveg_cost || 0);
+  set("e-extra-charges", e.extra_charges || 0); set("e-extra-cost", e.extra_cost || 0);
+  fillPackageSelects(); set("veg-package", e.veg_package || ""); set("nv-package", e.nonveg_package || "");
+  vegPicker.picked = [...(e.veg_items || [])]; nvPicker.picked = [...(e.nonveg_items || [])];
+  vegPicker.render(); nvPicker.render();
   $("event-form-title").textContent = "Edit: " + e.title;
   $("event-save").textContent = "Save changes";
   updateEventPreview();
-  $("event-form").scrollIntoView({ behavior: "smooth", block: "center" });
+  $("event-form").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+$("event-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const t = formTotals();
+  if (!t.vg && !t.ng && !confirm("No guests entered yet. Save anyway?")) return;
+  run(async () => {
+    const body = {
+      title: $("e-title").value.trim(), event_type: $("e-type").value, status: $("e-status").value,
+      date: $("e-date").value, time: $("e-time").value.trim(), description: $("e-desc").value.trim(),
+      customer: $("e-customer").value.trim(), phone: $("e-phone").value.trim(), is_public: $("e-public").checked,
+      veg_guests: t.vg, veg_package: $("veg-package").value, veg_price: evNum("veg-price"), veg_cost: evNum("veg-cost"),
+      veg_items: vegPicker.picked,
+      nonveg_guests: t.ng, nonveg_package: $("nv-package").value, nonveg_price: evNum("nv-price"), nonveg_cost: evNum("nv-cost"),
+      nonveg_items: nvPicker.picked,
+      extra_charges: evNum("e-extra-charges"), extra_cost: evNum("e-extra-cost"),
+    };
+    const savedId = editingEventId;
+    const r = savedId ? await api(`/staff/events/${savedId}`, "PUT", body) : await api("/staff/events", "POST", body);
+    toast(r.message); resetEventForm();
+    await loadEvents();
+    openEvent(savedId || r.id);
+  });
+});
+
+// ----- Load everything for the Events tab -----
 async function loadEvents() {
-  const [events, today, menu] = await Promise.all([api("/staff/events"), api("/staff/events/today"), api("/staff/menu")]);
-  eventRows = events;
-  evMenuAll = menu;
-  const curCat = $("ev-menu-cat").value;
-  $("ev-menu-cat").innerHTML = `<option value="">All categories</option>` +
-    [...new Set(menu.map((r) => r.category))].map((c) => `<option ${c === curCat ? "selected" : ""}>${esc(c)}</option>`).join("");
-  renderEventMenu();
-  const todayStr = today.date;
+  const [events, today, menu, pkgs] = await Promise.all([
+    api("/staff/events"), api("/staff/events/today"), api("/staff/menu"), api("/staff/packages")]);
+  eventRows = events; allDishes = menu; packages = pkgs;
+  [vegPicker, nvPicker, pkgPicker].forEach((p) => { p.fillCategories(); p.render(); });
+  fillPackageSelects();
+  renderPackages();
+
   $("today-summary").innerHTML = today.events
-    ? `<strong>${esc(today.total_plates)} plates</strong> needed for ${esc(today.events)} event(s) today: ` +
-      today.list.map((e) => `${esc(e.title)} (${esc(e.guests)})`).join(", ") +
+    ? `<strong>${esc(today.total_plates)} guests</strong> today (${esc(today.veg_guests)} veg, ${esc(today.nonveg_guests)} non-veg): ` +
+      today.list.map((e) => `${esc(e.title)}${e.time ? " at " + esc(e.time) : ""}`).join(", ") +
       (today.balance ? ` · <strong>${rs(today.balance)}</strong> still to collect` : "")
     : "No events today.";
 
-  const upcoming = events.filter((e) => e.date >= todayStr);
-  const sum = (k) => upcoming.reduce((t, e) => t + (e[k] || 0), 0);
+  const todayStr = today.date;
+  const upcoming = events.filter((e) => e.date >= todayStr && e.status === "Confirmed");
+  const enquiries = events.filter((e) => e.date >= todayStr && e.status === "Enquiry");
+  const sum = (list, k) => list.reduce((t, e) => t + (e[k] || 0), 0);
+  const profit = sum(upcoming, "profit");
   const tile = (label, value, sub, cls) =>
     `<div class="tile ${cls || ""}"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
-  const profit = sum("profit");
   $("event-tiles").innerHTML =
-    tile("Upcoming events", upcoming.length, `${sum("guests")} plates in total`, "hero") +
-    tile("Total bills", rs(sum("total_bill")), "what customers will pay") +
-    tile("Total investment", rs(sum("investment")), "food cost + extra costs") +
+    tile("Upcoming events", upcoming.length, `${sum(upcoming, "veg_guests")} veg · ${sum(upcoming, "nonveg_guests")} non-veg guests`, "hero") +
+    tile("Enquiries", enquiries.length, "not confirmed yet") +
+    tile("Total bills", rs(sum(upcoming, "total_bill")), "confirmed events") +
+    tile("Investment", rs(sum(upcoming, "investment")), "food cost + extra costs") +
     tile(profit < 0 ? "Expected loss" : "Expected profit", signedRs(profit), "bills minus investment", profit < 0 ? "loss" : "gain") +
-    tile("Advance received", rs(sum("advance")), `${rs(sum("balance"))} still to collect`);
+    tile("Received", rs(sum(upcoming, "paid")), `${rs(sum(upcoming, "balance"))} still to collect`);
 
-  $("events-body").innerHTML = events.length ? events.map((e) => `
-    <tr class="${e.date < todayStr ? "off" : ""}">
-      <td><strong>${esc(e.title)}</strong>${e.date < todayStr ? ' <span class="muted">(past)</span>' : ""}${e.date === todayStr ? ' <span class="role">today</span>' : ""}
-        ${e.customer ? `<div class="muted">${esc(e.customer)}${e.phone ? " · " + esc(e.phone) : ""}</div>` : ""}
-        ${e.description ? `<div class="muted">${esc(e.description)}</div>` : ""}
-        ${e.menu && e.menu.length ? `<div class="ev-menu"><strong>Menu:</strong> ${esc(e.menu.join(", "))}</div>` : ""}</td>
+  renderEventList(todayStr);
+  if (openEventId) openEvent(openEventId, true);
+}
+
+function renderEventList(todayStr) {
+  todayStr = todayStr || localToday();
+  const filters = {
+    Upcoming: (e) => e.date >= todayStr && ["Enquiry", "Confirmed"].includes(e.status),
+    Enquiries: (e) => e.status === "Enquiry",
+    Completed: (e) => e.status === "Completed" || (e.status === "Confirmed" && e.date < todayStr),
+    Cancelled: (e) => e.status === "Cancelled",
+    All: () => true,
+  };
+  $("ev-filter").innerHTML = Object.keys(filters).map((f) =>
+    `<button type="button" class="${f === eventFilter ? "on" : ""}" aria-pressed="${f === eventFilter}" data-evf="${f}">${f}<span class="n">${eventRows.filter(filters[f]).length}</span></button>`).join("");
+  $("ev-filter").querySelectorAll("[data-evf]").forEach((b) => b.addEventListener("click", () => { eventFilter = b.dataset.evf; renderEventList(); }));
+
+  const rows = eventRows.filter(filters[eventFilter]);
+  $("events-body").innerHTML = rows.length ? rows.map((e) => `
+    <tr class="${e.status === "Cancelled" ? "off" : ""}">
+      <td><strong>${esc(e.title)}</strong> <span class="pill ${esc(e.status)}">${esc(e.status)}</span>
+        ${e.date === todayStr ? '<span class="role">today</span>' : ""}${e.is_public ? ' <span class="muted">· public</span>' : ""}
+        <div class="muted">${esc(e.event_type || "")}${e.customer ? " · " + esc(e.customer) : ""}${e.phone ? " · " + esc(e.phone) : ""}</div></td>
       <td style="white-space:nowrap">${esc(e.date)}${e.time ? `<div class="muted">${esc(e.time)}</div>` : ""}</td>
-      <td class="num"><input type="number" min="0" max="10000" value="${esc(e.guests ?? 0)}" data-guests="${esc(e.id)}" style="width:80px;text-align:right" aria-label="Plates for ${esc(e.title)}"></td>
-      <td class="num">${e.price_per_head ? rs(e.price_per_head) : "-"}</td>
+      <td style="white-space:nowrap">${e.veg_guests ? `${vtag(true)} ${esc(e.veg_guests)}` : ""}${e.veg_guests && e.nonveg_guests ? "<br>" : ""}${e.nonveg_guests ? `${vtag(false)} ${esc(e.nonveg_guests)}` : ""}${!e.guests ? '<span class="muted">-</span>' : ""}</td>
       <td class="num"><strong>${rs(e.total_bill)}</strong></td>
       <td class="num">${rs(e.investment)}</td>
       <td class="num ${e.profit < 0 ? "bad-text" : "good"}">${signedRs(e.profit)}${e.profit < 0 ? " (loss)" : ""}</td>
-      <td class="num">${rs(e.advance || 0)}</td>
+      <td class="num">${rs(e.paid)}</td>
       <td class="num">${!e.total_bill ? "-" : e.balance ? `<strong>${rs(e.balance)}</strong>` : '<span class="good">Paid</span>'}</td>
-      <td><div class="actions"><button class="small" data-evedit="${esc(e.id)}">Edit</button>
+      <td><div class="actions"><button class="small primary" data-evopen="${esc(e.id)}">Open</button>
+        <button class="small" data-evedit="${esc(e.id)}">Edit</button>
         <button class="small danger" data-evdel="${esc(e.id)}">Delete</button></div></td></tr>`).join("")
-    : `<tr><td colspan="10" class="empty">No events yet.</td></tr>`;
-
-  document.querySelectorAll("[data-guests]").forEach((inp) => inp.addEventListener("change", () => run(async () => {
-    const n = Number(inp.value);
-    if (!Number.isInteger(n) || n < 0) { toast("Enter a whole number of plates", true); return; }
-    await api(`/staff/events/${encodeURIComponent(inp.dataset.guests)}/guests`, "PATCH", { guests: n });
-    toast(`Plates updated to ${n}`); loadEvents();
-  })));
-  document.querySelectorAll("[data-evedit]").forEach((b) => b.addEventListener("click", () => editEvent(Number(b.dataset.evedit))));
-  document.querySelectorAll("[data-evdel]").forEach((btn) => btn.addEventListener("click", () => {
-    if (!confirm("Delete this event?")) return;
-    run(async () => { await api(`/staff/events/${encodeURIComponent(btn.dataset.evdel)}`, "DELETE"); toast("Event deleted"); loadEvents(); });
+    : `<tr><td colspan="9" class="empty">No events here.</td></tr>`;
+  $("events-body").querySelectorAll("[data-evopen]").forEach((b) => b.addEventListener("click", () => openEvent(Number(b.dataset.evopen))));
+  $("events-body").querySelectorAll("[data-evedit]").forEach((b) => b.addEventListener("click", () => editEvent(Number(b.dataset.evedit))));
+  $("events-body").querySelectorAll("[data-evdel]").forEach((b) => b.addEventListener("click", () => {
+    if (!confirm("Delete this event and its payments? This cannot be undone.")) return;
+    run(async () => {
+      await api(`/staff/events/${encodeURIComponent(b.dataset.evdel)}`, "DELETE");
+      if (openEventId === Number(b.dataset.evdel)) closeEvent();
+      toast("Event deleted"); loadEvents();
+    });
   }));
 }
 
-$("event-form").addEventListener("submit", (e) => {
-  e.preventDefault();
+// ----- Event details: payments, kitchen plan, print -----
+function closeEvent() { openEventId = null; $("ev-detail").classList.add("hidden"); $("ev-detail").innerHTML = ""; }
+
+async function openEvent(id, quiet) {
+  if (!id) return;
+  const d = await api(`/staff/events/${id}`);
+  openEventId = id;
+  const e = d.event, k = d.kitchen, isAdmin = me.role === "admin";
+  const box = $("ev-detail");
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <div class="toolbar">
+      <div><h2 style="margin:0">${esc(e.title)} <span class="pill ${esc(e.status)}">${esc(e.status)}</span></h2>
+        <div class="muted">${esc(e.event_type || "")} · ${esc(e.date)}${e.time ? " at " + esc(e.time) : ""}${e.customer ? " · " + esc(e.customer) : ""}${e.phone ? " · " + esc(e.phone) : ""}</div>
+        ${e.description ? `<div class="muted">${esc(e.description)}</div>` : ""}</div>
+      <div class="actions">
+        <select id="ev-status-sel" aria-label="Change status">${EVENT_STATUSES.map((st) => `<option ${st === e.status ? "selected" : ""}>${st}</option>`).join("")}</select>
+        <button class="small" type="button" id="ev-edit-btn">Edit</button>
+        <button class="small" type="button" id="ev-print-quote">Print quotation</button>
+        <button class="small" type="button" id="ev-print-kitchen">Print kitchen sheet</button>
+        <button class="small" type="button" id="ev-close">Close</button>
+      </div>
+    </div>
+    <div class="charts" style="margin-top:12px">
+      <div>
+        <h3>Bill</h3>
+        <table class="breakdown"><tbody>
+          ${e.veg_guests ? `<tr><td>${vtag(true)} ${e.veg_guests} guests × ${rs(e.veg_price)}${e.veg_package ? ` <span class="muted">(${esc(e.veg_package)})</span>` : ""}</td><td class="num">${rs(e.veg_guests * e.veg_price)}</td></tr>` : ""}
+          ${e.nonveg_guests ? `<tr><td>${vtag(false)} ${e.nonveg_guests} guests × ${rs(e.nonveg_price)}${e.nonveg_package ? ` <span class="muted">(${esc(e.nonveg_package)})</span>` : ""}</td><td class="num">${rs(e.nonveg_guests * e.nonveg_price)}</td></tr>` : ""}
+          ${e.extra_charges ? `<tr><td>Extra charges</td><td class="num">${rs(e.extra_charges)}</td></tr>` : ""}
+          <tr class="total"><td>Total bill</td><td class="num">${rs(e.total_bill)}</td></tr>
+          <tr><td>Paid</td><td class="num good">${rs(e.paid)}</td></tr>
+          <tr class="total"><td>Balance to collect</td><td class="num">${e.balance ? rs(e.balance) : '<span class="good">Fully paid</span>'}</td></tr>
+          <tr><td class="muted">Our investment</td><td class="num muted">${rs(e.investment)}</td></tr>
+          <tr><td class="muted">${e.profit < 0 ? "Loss" : "Profit"}</td><td class="num ${e.profit < 0 ? "bad-text" : "good"}">${signedRs(e.profit)}</td></tr>
+        </tbody></table>
+      </div>
+      <div>
+        <h3>Payments</h3>
+        <table><tbody>${d.payments.length ? d.payments.map((p) => `
+          <tr><td>${esc(p.date)}</td><td>${esc(p.method)}${p.note ? ` <span class="muted">· ${esc(p.note)}</span>` : ""}</td>
+            <td class="num">${rs(p.amount)}</td>
+            <td style="width:1%">${isAdmin ? `<button class="small danger" type="button" data-paydel="${esc(p.id)}">Delete</button>` : ""}</td></tr>`).join("")
+          : '<tr><td class="empty">No payments yet.</td></tr>'}</tbody></table>
+        <form class="row" id="pay-form" style="margin-top:8px">
+          <input id="pay-amount" type="number" min="1" placeholder="Amount (Rs.)" required ${e.balance ? `value="${e.balance}"` : ""}>
+          <select id="pay-method" aria-label="Payment method">${PAY_METHODS.map((m) => `<option>${m}</option>`).join("")}</select>
+          <input id="pay-note" placeholder="Note (e.g. Advance)" maxlength="100">
+          <button class="primary" type="submit">Add payment</button>
+        </form>
+      </div>
+    </div>
+    <h3 style="margin-top:16px">Kitchen plan - how much to cook <span class="muted" style="font-weight:400">(${k.guests} guests)</span></h3>
+    ${k.items.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Course</th><th>Dish</th><th class="num">Cook about</th><th class="num">For guests</th></tr></thead>
+      <tbody>${k.items.map((it) => `<tr><td class="muted">${esc(it.course)}</td><td>${esc(it.dish)}</td><td class="num"><strong>${esc(it.quantity)}</strong></td><td class="num">${esc(it.guests)}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <p class="muted">Suggested staff: <strong>${k.staff.waiters} waiters</strong>, <strong>${k.staff.cooks} cooks</strong>, <strong>${k.staff.helpers} helpers</strong>. ${esc(k.note)}</p>`
+    : '<p class="muted">Add guests and dishes to see the kitchen plan.</p>'}`;
+
+  $("ev-close").addEventListener("click", closeEvent);
+  $("ev-edit-btn").addEventListener("click", () => editEvent(e.id));
+  $("ev-status-sel").addEventListener("change", () => run(async () => {
+    await api(`/staff/events/${e.id}/status`, "PATCH", { status: $("ev-status-sel").value });
+    toast(`Status: ${$("ev-status-sel").value}`); loadEvents();
+  }));
+  $("pay-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    run(async () => {
+      const r = await api(`/staff/events/${e.id}/payments`, "POST",
+        { amount: Number($("pay-amount").value), method: $("pay-method").value, note: $("pay-note").value.trim() });
+      toast(r.message); loadEvents();
+    });
+  });
+  box.querySelectorAll("[data-paydel]").forEach((b) => b.addEventListener("click", () => {
+    if (!confirm("Delete this payment?")) return;
+    run(async () => { await api(`/staff/events/payments/${b.dataset.paydel}`, "DELETE"); toast("Payment deleted"); loadEvents(); });
+  }));
+  $("ev-print-quote").addEventListener("click", () => printQuote(e, d.payments));
+  $("ev-print-kitchen").addEventListener("click", () => printKitchen(e, k));
+  if (!quiet) box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ----- Printing -----
+function printPage(title, bodyHtml) {
+  const w = window.open("", "_blank");
+  if (!w) { toast("Allow pop-ups for this page to print", true); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;color:#222;margin:32px;font-size:14px}
+    h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:20px 0 6px} .muted{color:#666}
+    table{width:100%;border-collapse:collapse;margin-top:6px} td,th{text-align:left;padding:6px 8px;border-bottom:1px solid #ddd}
+    th{font-size:12px;text-transform:uppercase;color:#666} .num{text-align:right} .total td{font-weight:700;border-top:2px solid #222}
+    ul{margin:4px 0 0;padding-left:18px} .cols{display:flex;gap:24px} .cols>div{flex:1}
+  </style></head><body>${bodyHtml}<script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+}
+
+function printQuote(e, payments) {
+  const name = $("rname").textContent;
+  const group = (label, guests, price, pkg, items) => guests ? `<div><h2>${label}: ${guests} guests${pkg ? " - " + esc(pkg) : ""}</h2>
+    <ul>${items.map((d) => `<li>${esc(d)}</li>`).join("")}</ul></div>` : "";
+  printPage(`Quotation - ${e.title}`, `
+    <h1>${esc(name)} - Event quotation</h1>
+    <div class="muted">Date of quotation: ${esc(localToday())}</div>
+    <h2>${esc(e.title)}</h2>
+    <div>${esc(e.event_type || "")} · ${esc(e.date)}${e.time ? " at " + esc(e.time) : ""}</div>
+    ${e.customer ? `<div>Customer: ${esc(e.customer)}${e.phone ? " · " + esc(e.phone) : ""}</div>` : ""}
+    ${e.description ? `<div class="muted">${esc(e.description)}</div>` : ""}
+    <div class="cols">${group("Veg buffet", e.veg_guests, e.veg_price, e.veg_package, e.veg_items)}${group("Non-veg buffet", e.nonveg_guests, e.nonveg_price, e.nonveg_package, e.nonveg_items)}</div>
+    <h2>Charges</h2>
+    <table><tbody>
+      ${e.veg_guests ? `<tr><td>Veg buffet: ${e.veg_guests} × ${rs(e.veg_price)}</td><td class="num">${rs(e.veg_guests * e.veg_price)}</td></tr>` : ""}
+      ${e.nonveg_guests ? `<tr><td>Non-veg buffet: ${e.nonveg_guests} × ${rs(e.nonveg_price)}</td><td class="num">${rs(e.nonveg_guests * e.nonveg_price)}</td></tr>` : ""}
+      ${e.extra_charges ? `<tr><td>Extra charges (decoration, hall, music...)</td><td class="num">${rs(e.extra_charges)}</td></tr>` : ""}
+      <tr class="total"><td>Total</td><td class="num">${rs(e.total_bill)}</td></tr>
+      ${payments.map((p) => `<tr><td class="muted">Paid ${esc(p.date)} by ${esc(p.method)}${p.note ? " (" + esc(p.note) + ")" : ""}</td><td class="num muted">- ${rs(p.amount)}</td></tr>`).join("")}
+      <tr class="total"><td>Balance to pay</td><td class="num">${rs(e.balance)}</td></tr>
+    </tbody></table>
+    <p class="muted">The final bill is based on the final number of guests.</p>`);
+}
+
+function printKitchen(e, k) {
+  printPage(`Kitchen sheet - ${e.title}`, `
+    <h1>Kitchen sheet: ${esc(e.title)}</h1>
+    <div>${esc(e.date)}${e.time ? " at " + esc(e.time) : ""} · <strong>${e.veg_guests} veg</strong> + <strong>${e.nonveg_guests} non-veg</strong> = ${k.guests} guests</div>
+    ${e.description ? `<div class="muted">Notes: ${esc(e.description)}</div>` : ""}
+    <table><thead><tr><th>Course</th><th>Dish</th><th class="num">Cook about</th><th class="num">For guests</th><th>Done</th></tr></thead>
+      <tbody>${k.items.map((it) => `<tr><td>${esc(it.course)}</td><td>${esc(it.dish)}</td><td class="num"><strong>${esc(it.quantity)}</strong></td><td class="num">${it.guests}</td><td>☐</td></tr>`).join("")}</tbody></table>
+    <p>Staff: ${k.staff.waiters} waiters, ${k.staff.cooks} cooks, ${k.staff.helpers} helpers</p>
+    <p class="muted">${esc(k.note)}</p>`);
+}
+
+// ----- Buffet packages -----
+function renderPackages() {
+  const isAdmin = me.role === "admin";
+  $("pkg-list").innerHTML = packages.length ? packages.map((p) => `
+    <div class="pkg">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong>${esc(p.name)}</strong>${vtag(p.food_type === "Veg")}</div>
+      <div><span class="price">${rs(p.price_per_head)}</span> <span class="muted">per head · cost ${rs(p.cost_per_head)} · margin ${rs(p.price_per_head - p.cost_per_head)}</span></div>
+      ${p.description ? `<div class="muted">${esc(p.description)}</div>` : ""}
+      <div style="font-size:13px">${p.items.map(esc).join(", ")}</div>
+      ${isAdmin ? `<div class="actions" style="margin-top:auto"><button class="small" type="button" data-pkedit="${p.id}">Edit</button>
+        <button class="small danger" type="button" data-pkdel="${p.id}">Delete</button></div>` : ""}
+    </div>`).join("") : '<p class="muted">No packages yet.</p>';
+  $("pkg-list").querySelectorAll("[data-pkedit]").forEach((b) => b.addEventListener("click", () => {
+    const p = packages.find((x) => x.id === Number(b.dataset.pkedit));
+    editingPackageId = p.id;
+    $("pk-name").value = p.name; $("pk-type").value = p.food_type; $("pk-price").value = p.price_per_head;
+    $("pk-cost").value = p.cost_per_head; $("pk-desc").value = p.description || "";
+    pkgPicker.picked = [...p.items]; pkgPicker.fillCategories(); pkgPicker.render();
+    $("pkg-form-title").textContent = "Edit: " + p.name;
+    $("pkg-form").scrollIntoView({ behavior: "smooth", block: "center" });
+  }));
+  $("pkg-list").querySelectorAll("[data-pkdel]").forEach((b) => b.addEventListener("click", () => {
+    if (!confirm("Delete this package? Events that used it keep their own prices and dishes.")) return;
+    run(async () => { await api(`/staff/packages/${b.dataset.pkdel}`, "DELETE"); toast("Package deleted"); loadEvents(); });
+  }));
+}
+
+function resetPackageForm() {
+  editingPackageId = null; $("pkg-form").reset(); pkgPicker.picked = [];
+  pkgPicker.fillCategories(); pkgPicker.render(); $("pkg-form-title").textContent = "Add a package";
+}
+
+$("pkg-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  if (!pkgPicker.picked.length) { toast("Tick at least one dish", true); return; }
   run(async () => {
-    const body = {
-      title: $("e-title").value.trim(), date: $("e-date").value, time: $("e-time").value.trim(),
-      description: $("e-desc").value.trim(), customer: $("e-customer").value.trim(), phone: $("e-phone").value.trim(),
-      guests: evNum("e-guests"), price_per_head: evNum("e-price"), cost_per_head: evNum("e-cost"),
-      extra_cost: evNum("e-extra"), advance: evNum("e-advance"), menu: evMenuPicked,
-    };
-    const r = editingEventId
-      ? await api(`/staff/events/${editingEventId}`, "PUT", body)
-      : await api("/staff/events", "POST", body);
-    toast(r.message); resetEventForm(); loadEvents();
+    const body = { name: $("pk-name").value.trim(), food_type: $("pk-type").value,
+      price_per_head: Number($("pk-price").value), cost_per_head: Number($("pk-cost").value),
+      description: $("pk-desc").value.trim(), items: pkgPicker.picked };
+    const r = editingPackageId ? await api(`/staff/packages/${editingPackageId}`, "PUT", body)
+                               : await api("/staff/packages", "POST", body);
+    toast(r.message); resetPackageForm(); loadEvents();
   });
 });
 

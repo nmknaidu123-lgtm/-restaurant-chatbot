@@ -86,3 +86,28 @@ DEFAULT_MENU = {
         "Virgin Mojito": 150, "Blue Lagoon": 160, "Fruit Punch": 150, "Mint Cooler": 130,
     },
 }
+
+
+# Words that mark a dish as NON-VEG (used once to tag the menu; change any dish later in the Menu tab)
+NON_VEG_WORDS = ("chicken", "mutton", "fish", "prawn", "egg", "keema", "lamb", "meat", "crab", "non-veg")
+
+# Starting buffet packages for events (change them on the Events tab)
+DEFAULT_PACKAGES = [
+    {"name": "Veg Classic", "food_type": "Veg", "price_per_head": 350, "cost_per_head": 190,
+     "description": "2 starters, 2 curries, biryani, naan and a sweet",
+     "items": ["Veg Manchurian", "Gobi 65", "Paneer Butter Masala", "Dal Tadka", "Veg Biryani",
+               "Butter Naan", "Gulab Jamun"]},
+    {"name": "Veg Premium", "food_type": "Veg", "price_per_head": 500, "cost_per_head": 280,
+     "description": "Paneer starters, 3 curries, biryani and rice, 2 desserts and a welcome drink",
+     "items": ["Paneer Tikka", "Crispy Corn", "Kadai Paneer", "Dal Makhani", "Mixed Veg Curry", "Veg Biryani",
+               "Jeera Rice", "Garlic Naan", "Double Ka Meetha", "Vanilla Ice Cream", "Sweet Lassi"]},
+    {"name": "Non-Veg Classic", "food_type": "Non-veg", "price_per_head": 450, "cost_per_head": 260,
+     "description": "Chicken and veg starters, butter chicken, dal, chicken biryani, naan and a sweet",
+     "items": ["Chicken 65", "Veg Manchurian", "Butter Chicken", "Dal Tadka", "Chicken Biryani",
+               "Butter Naan", "Gulab Jamun"]},
+    {"name": "Non-Veg Premium", "food_type": "Non-veg", "price_per_head": 650, "cost_per_head": 380,
+     "description": "3 starters, chicken and mutton curries, mutton biryani, 2 desserts and a drink",
+     "items": ["Chicken Lollipop", "Apollo Fish", "Paneer Tikka", "Butter Chicken", "Mutton Curry",
+               "Mutton Biryani", "Jeera Rice", "Garlic Naan", "Qubani Ka Meetha", "Vanilla Ice Cream",
+               "Fresh Lime Soda"]},
+]

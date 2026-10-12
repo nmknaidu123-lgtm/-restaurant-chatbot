@@ -13,7 +13,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.data import get_menu, get_menu_by_category, get_setting, get_events
+from app.data import get_menu, get_menu_by_category, get_setting, get_public_events, get_packages
 from app.discounts import calculate_bill
 
 load_dotenv()   # reads GEMINI_API_KEY from the .env file
@@ -140,11 +140,18 @@ def book_table(state: RestaurantState) -> RestaurantState:
                       f"on {booking['date']} at {booking['time']}. See you soon!")}
 
 
+def _packages_for_customers() -> list:
+    return [{"name": p["name"], "type": p["food_type"], "price_per_head": p["price_per_head"],
+             "dishes": p["items"]} for p in get_packages()]
+
+
 def answer_question(state: RestaurantState) -> RestaurantState:
     reply = llm.invoke(
         f"You are a friendly waiter at {get_setting('restaurant_name')}. Answer in 1-3 short "
         "sentences using ONLY this information. If the answer is not here, say you are not sure.\n"
-        f"{get_setting('restaurant_info')}\nMenu (dish: price in Rs.): {get_menu()}\n\n"
+        f"{get_setting('restaurant_info')}\nMenu (dish: price in Rs.): {get_menu()}\n"
+        f"Party / event buffet packages (price per head in Rs.): {_packages_for_customers()}\n"
+        "For a party booking, ask the customer to call the restaurant.\n\n"
         f"Customer: {state['user_input']}"
     )
     return {"reply": text_of(reply)}
@@ -164,7 +171,7 @@ def show_bill(state: RestaurantState) -> RestaurantState:
 
 
 def show_events(state: RestaurantState) -> RestaurantState:
-    events = get_events(upcoming_only=True)
+    events = get_public_events()          # only public events - never private parties
     if not events:
         return {"reply": "There are no upcoming events right now. Please check again soon!"}
     lines = []

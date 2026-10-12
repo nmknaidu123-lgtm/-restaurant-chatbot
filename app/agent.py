@@ -27,7 +27,7 @@ with warnings.catch_warnings():            # create_react_agent prints a "moved"
 
 from app.auth import admin_only
 from app.database import db
-from app.data import get_events, get_menu_full, get_setting
+from app.data import get_events, get_menu_full, get_packages, get_setting, kitchen_plan
 from app.graph import llm, text_of
 
 router = APIRouter(prefix="/staff/assistant", tags=["Admin - AI assistant"])
@@ -80,21 +80,37 @@ def make_tools(staff: dict) -> list:
 
     @tool
     def upcoming_events() -> list:
-        """Upcoming events: date, time, dishes on the event menu, plates (guests), price per head, total bill,
-        investment (our cost), expected profit, advance paid and balance still to collect."""
-        return [{"title": e["title"], "date": e["date"], "time": e["time"], "customer": e.get("customer"),
-                 "plates": e.get("guests", 0), "price_per_head": e.get("price_per_head", 0),
+        """Upcoming events (buffet parties): status, customer, veg and non-veg guests, packages,
+        dishes, total bill, investment (our cost), expected profit, money paid and balance to collect."""
+        return [{"id": e["id"], "title": e["title"], "type": e.get("event_type"), "status": e.get("status"),
+                 "date": e["date"], "time": e["time"], "customer": e.get("customer"),
+                 "veg_guests": e.get("veg_guests", 0), "veg_package": e.get("veg_package"),
+                 "veg_dishes": e.get("veg_items", []),
+                 "nonveg_guests": e.get("nonveg_guests", 0), "nonveg_package": e.get("nonveg_package"),
+                 "nonveg_dishes": e.get("nonveg_items", []),
                  "total_bill": e["total_bill"], "investment": e["investment"], "profit": e["profit"],
-                 "advance": e.get("advance", 0), "balance": e["balance"], "menu": e.get("menu", [])}
+                 "paid": e["paid"], "balance": e["balance"]}
                 for e in get_events(upcoming_only=True)]
 
     @tool
+    def event_kitchen_plan(event_id: int) -> dict:
+        """How much of each dish to cook for an event (buffet estimate with 10% extra),
+        and suggested waiters / cooks / helpers. event_id comes from upcoming_events."""
+        e = next((x for x in get_events() if x["id"] == event_id), None)
+        return kitchen_plan(e) if e else {"error": "No event with that id"}
+
+    @tool
+    def buffet_packages() -> list:
+        """The buffet packages for events: name, veg or non-veg, price per head, our cost per head, dishes."""
+        return get_packages()
+
+    @tool
     def search_menu(query: str = "") -> list:
-        """Find dishes on the menu (name, price, category, available or sold out).
+        """Find dishes on the menu (name, price, category, veg or non-veg, available or sold out).
         query: part of a dish or category name, or empty for the whole menu."""
         q = query.strip().lower()
         return [{"dish": r["dish"], "price": r["price"], "category": r["category"],
-                 "available": bool(r["available"])}
+                 "veg": bool(r.get("is_veg")), "available": bool(r["available"])}
                 for r in get_menu_full() if not q or q in r["dish"].lower() or q in r["category"].lower()]
 
     @tool
@@ -138,8 +154,9 @@ def make_tools(staff: dict) -> list:
                            description=description, amount=amount)
         return m.add_expense(body, staff)["message"]
 
-    return [sales_report, money_report, open_orders, bookings, upcoming_events, search_menu,
-            staff_summary, set_dish_availability, update_order_status, add_expense]
+    return [sales_report, money_report, open_orders, bookings, upcoming_events, event_kitchen_plan,
+            buffet_packages, search_menu, staff_summary, set_dish_availability, update_order_status,
+            add_expense]
 
 
 CHANGE_TOOLS = {"set_dish_availability", "update_order_status", "add_expense"}

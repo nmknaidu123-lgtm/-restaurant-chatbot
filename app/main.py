@@ -19,8 +19,10 @@ from pydantic import BaseModel, Field
 from app.database import db, init_db, new_password_record
 from app.data import (get_setting, set_setting, get_menu, get_menu_by_category, get_menu_full,
                       get_order_cart, save_order, get_order_status, save_booking, get_booking,
-                      add_order_notes, describe_request, event_totals,
-                      get_events)
+                      add_order_notes, describe_request,
+                      get_events, get_event, get_public_events, get_event_payments, get_packages,
+                      kitchen_plan, EVENT_STATUSES)
+from app.database import guess_is_veg
 from app.graph import bot, session_state, clear_session
 from app.discounts import generate_code, list_codes, delete_code, apply_code, calculate_bill
 from app.auth import router as auth_router, current_staff, admin_only
@@ -317,6 +319,7 @@ class MenuItem(BaseModel):
     price: int = Field(gt=0, le=100000, examples=[90])
     category: str = Field(min_length=1, max_length=40, examples=["Lassi"])
     available: bool = True
+    is_veg: Optional[bool] = Field(default=None, description="Veg dish? Leave empty to guess from the name")
 
 
 class Availability(BaseModel):
@@ -333,11 +336,12 @@ def add_or_update_dish(item: MenuItem, staff: dict = Depends(admin_only)):
     dish = item.dish.strip()
     with db() as conn:
         exists = conn.execute("SELECT 1 FROM menu WHERE dish = ?", (dish,)).fetchone()
+        is_veg = item.is_veg if item.is_veg is not None else guess_is_veg(dish, item.category)
         conn.execute(
-            "INSERT INTO menu (dish, price, category, available) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(dish) DO UPDATE SET price = excluded.price, "
-            "category = excluded.category, available = excluded.available",
-            (dish, item.price, item.category.strip(), int(item.available)),
+            "INSERT INTO menu (dish, price, category, available, is_veg) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(dish) DO UPDATE SET price = excluded.price, category = excluded.category, "
+            "available = excluded.available, is_veg = excluded.is_veg",
+            (dish, item.price, item.category.strip(), int(item.available), int(is_veg)),
         )
     return {"message": f"{dish} {'updated' if exists else 'added'}"}
 
@@ -487,55 +491,109 @@ def save_settings(body: Settings, staff: dict = Depends(admin_only)):
 
 
 # =========================================================
-# EVENTS (customers see them, staff manage them)
+# EVENTS - buffet catering (customers see public events, staff manage everything)
 # =========================================================
+EVENT_TYPES = ["Birthday", "Wedding", "Engagement", "Corporate", "Get-together", "Festival / special night", "Other"]
+
+
 class EventIn(BaseModel):
-    title: str = Field(min_length=1, max_length=80, examples=["Live music night"])
+    title: str = Field(min_length=1, max_length=80, examples=["Ravi's 40th birthday"])
+    event_type: Literal["Birthday", "Wedding", "Engagement", "Corporate", "Get-together",
+                        "Festival / special night", "Other"] = "Other"
+    status: Literal["Enquiry", "Confirmed", "Completed", "Cancelled"] = "Confirmed"
     date: dt.date = Field(examples=["2026-10-17"], description="YYYY-MM-DD")
-    time: str = Field(default="", max_length=30, examples=["8 PM"])
-    description: str = Field(default="", max_length=500, examples=["Live ghazals with dinner"])
-    guests: int = Field(default=0, ge=0, le=10000, examples=[50], description="Plates / people expected")
-    price_per_head: int = Field(default=0, ge=0, le=100000, examples=[450], description="Rs. the customer pays per plate")
-    cost_per_head: int = Field(default=0, ge=0, le=100000, examples=[250], description="Rs. our food cost per plate")
-    extra_cost: int = Field(default=0, ge=0, le=10_000_000, examples=[3000], description="Decoration, music, hall... (Rs.)")
-    advance: int = Field(default=0, ge=0, le=10_000_000, examples=[5000], description="Advance already paid (Rs.)")
+    time: str = Field(default="", max_length=30, examples=["7 PM"])
+    description: str = Field(default="", max_length=500, examples=["Garden area, cake at 9 PM"])
     customer: str = Field(default="", max_length=60, examples=["Ravi Kumar"])
     phone: str = Field(default="", max_length=20, examples=["9876543210"])
-    menu: list[str] = Field(default_factory=list, max_length=60,
-                            examples=[["Veg Biryani", "Paneer Butter Masala", "Gulab Jamun"]],
-                            description="Dishes served at the event (names from the menu)")
+    is_public: bool = Field(default=False, description="Show this event to customers in the chatbot")
+    # Veg guests
+    veg_guests: int = Field(default=0, ge=0, le=10000, examples=[80])
+    veg_package: str = Field(default="", max_length=60, examples=["Veg Classic"])
+    veg_price: int = Field(default=0, ge=0, le=100000, examples=[350], description="Rs. per veg guest")
+    veg_cost: int = Field(default=0, ge=0, le=100000, examples=[190], description="Our cost per veg guest")
+    veg_items: list[str] = Field(default_factory=list, max_length=40)
+    # Non-veg guests
+    nonveg_guests: int = Field(default=0, ge=0, le=10000, examples=[120])
+    nonveg_package: str = Field(default="", max_length=60, examples=["Non-Veg Classic"])
+    nonveg_price: int = Field(default=0, ge=0, le=100000, examples=[450])
+    nonveg_cost: int = Field(default=0, ge=0, le=100000, examples=[260])
+    nonveg_items: list[str] = Field(default_factory=list, max_length=40)
+    # Extras
+    extra_charges: int = Field(default=0, ge=0, le=10_000_000, examples=[5000],
+                               description="Customer pays extra: decoration, hall, music... (Rs.)")
+    extra_cost: int = Field(default=0, ge=0, le=10_000_000, examples=[3000],
+                            description="Our extra costs: decoration, hall, music... (Rs.)")
 
 
-EVENT_FIELDS = ("title", "date", "time", "description", "guests", "price_per_head",
-                "cost_per_head", "extra_cost", "advance", "customer", "phone", "menu")
+EVENT_FIELDS = ("title", "event_type", "status", "date", "time", "description", "customer", "phone",
+                "is_public", "veg_guests", "veg_package", "veg_price", "veg_cost", "veg_items",
+                "nonveg_guests", "nonveg_package", "nonveg_price", "nonveg_cost", "nonveg_items",
+                "extra_charges", "extra_cost", "guests")
 
 
 def _event_values(body: EventIn) -> tuple:
-    known = {r["dish"] for r in get_menu_full()}
-    unknown = [d for d in body.menu if d not in known]
+    dishes = {r["dish"]: bool(r["is_veg"]) for r in get_menu_full()}
+    unknown = [d for d in body.veg_items + body.nonveg_items if d not in dishes]
     if unknown:
         raise HTTPException(status_code=400, detail="Not on the menu: " + ", ".join(unknown))
+    not_veg = [d for d in body.veg_items if not dishes[d]]
+    if not_veg:
+        raise HTTPException(status_code=400, detail="These are not veg, so they cannot be in the veg menu: "
+                                                     + ", ".join(not_veg))
     d = body.model_dump()
     d["date"] = body.date.isoformat()
-    d["menu"] = json.dumps(list(dict.fromkeys(body.menu)))     # remove duplicates, keep order
+    d["is_public"] = int(body.is_public)
+    d["veg_items"] = json.dumps(list(dict.fromkeys(body.veg_items)))
+    d["nonveg_items"] = json.dumps(list(dict.fromkeys(body.nonveg_items)))
+    d["guests"] = body.veg_guests + body.nonveg_guests
     return tuple(d[f].strip() if isinstance(d[f], str) else d[f] for f in EVENT_FIELDS)
-
-
-class GuestsUpdate(BaseModel):
-    guests: int = Field(ge=0, le=10000, examples=[60])
 
 
 @api.get("/events", tags=["Customer"])
 def upcoming_events():
-    """Events from today onwards (for customers) - only public details, no prices or phone numbers."""
-    return [{k: e[k] for k in ("title", "date", "time", "description")}
-            for e in get_events(upcoming_only=True)]
+    """Upcoming PUBLIC events (for customers) - only name, date, time and description."""
+    return get_public_events()
+
+
+@api.get("/packages", tags=["Customer"])
+def buffet_packages():
+    """Buffet packages for parties (for customers) - prices per head and dishes, no costs."""
+    return [{k: p[k] for k in ("name", "food_type", "price_per_head", "items", "description")}
+            for p in get_packages()]
 
 
 @api.get("/staff/events", tags=["Staff - Events"])
 def all_events(staff: dict = Depends(current_staff)):
-    """Every event, including past ones (for the admin page)."""
+    """Every event, including past ones, with money totals."""
     return get_events()
+
+
+@api.get("/staff/events/options", tags=["Staff - Events"])
+def event_options(staff: dict = Depends(current_staff)):
+    return {"types": EVENT_TYPES, "statuses": EVENT_STATUSES, "payment_methods": PAYMENT_METHODS}
+
+
+@api.get("/staff/events/today", tags=["Staff - Events"])
+def events_today(staff: dict = Depends(current_staff)):
+    """Today's confirmed events: guests (veg / non-veg) and money still to collect."""
+    today = dt.date.today().isoformat()
+    rows = [e for e in get_events() if e["date"] == today and e["status"] in ("Confirmed", "Completed")]
+    return {"date": today, "events": len(rows),
+            "total_plates": sum(r["guests"] for r in rows),
+            "veg_guests": sum(r["veg_guests"] for r in rows),
+            "nonveg_guests": sum(r["nonveg_guests"] for r in rows),
+            "total_bill": sum(r["total_bill"] for r in rows),
+            "balance": sum(r["balance"] for r in rows), "list": rows}
+
+
+@api.get("/staff/events/{event_id}", tags=["Staff - Events"])
+def event_details(event_id: int, staff: dict = Depends(current_staff)):
+    """One event with its payments and the kitchen plan (how much to cook)."""
+    e = get_event(event_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"event": e, "payments": get_event_payments(event_id), "kitchen": kitchen_plan(e)}
 
 
 @api.post("/staff/events", tags=["Staff - Events"])
@@ -550,7 +608,7 @@ def add_event(body: EventIn, staff: dict = Depends(current_staff)):
 
 @api.put("/staff/events/{event_id}", tags=["Staff - Events"])
 def edit_event(event_id: int, body: EventIn, staff: dict = Depends(current_staff)):
-    """Change every detail of an event (name, date, plates, prices, advance...)."""
+    """Change every detail of an event."""
     with db() as conn:
         changed = conn.execute(
             f"UPDATE events SET {', '.join(f + ' = ?' for f in EVENT_FIELDS)} WHERE id = ?",
@@ -561,29 +619,16 @@ def edit_event(event_id: int, body: EventIn, staff: dict = Depends(current_staff
     return {"message": f"Event '{body.title.strip()}' updated"}
 
 
-@api.patch("/staff/events/{event_id}/guests", tags=["Staff - Events"])
-def update_guests(event_id: int, body: GuestsUpdate, staff: dict = Depends(current_staff)):
-    """Change how many plates / guests are expected for an event."""
+class EventStatus(BaseModel):
+    status: Literal["Enquiry", "Confirmed", "Completed", "Cancelled"]
+
+
+@api.patch("/staff/events/{event_id}/status", tags=["Staff - Events"])
+def set_event_status(event_id: int, body: EventStatus, staff: dict = Depends(current_staff)):
     with db() as conn:
-        if not conn.execute("UPDATE events SET guests = ? WHERE id = ?",
-                            (body.guests, event_id)).rowcount:
+        if not conn.execute("UPDATE events SET status = ? WHERE id = ?", (body.status, event_id)).rowcount:
             raise HTTPException(status_code=404, detail="Event not found")
-    return {"id": event_id, "guests": body.guests}
-
-
-@api.get("/staff/events/today", tags=["Staff - Events"])
-def events_today(staff: dict = Depends(current_staff)):
-    """Today's events and the total number of plates needed."""
-    today = dt.date.today().isoformat()
-    with db() as conn:
-        rows = [event_totals(dict(r)) for r in conn.execute(
-            "SELECT * FROM events WHERE date = ? ORDER BY time", (today,))]
-    return {"date": today, "events": len(rows),
-            "total_plates": sum(r["guests"] or 0 for r in rows),
-            "total_bill": sum(r["total_bill"] for r in rows),
-            "investment": sum(r["investment"] for r in rows),
-            "profit": sum(r["profit"] for r in rows),
-            "balance": sum(r["balance"] for r in rows), "list": rows}
+    return {"id": event_id, "status": body.status}
 
 
 @api.delete("/staff/events/{event_id}", tags=["Staff - Events"])
@@ -591,7 +636,103 @@ def delete_event(event_id: int, staff: dict = Depends(current_staff)):
     with db() as conn:
         if not conn.execute("DELETE FROM events WHERE id = ?", (event_id,)).rowcount:
             raise HTTPException(status_code=404, detail="Event not found")
+        conn.execute("DELETE FROM event_payments WHERE event_id = ?", (event_id,))
     return {"message": "Event deleted"}
+
+
+# ---------- Event payments (advance and later payments) ----------
+PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank transfer"]
+
+
+class PaymentIn(BaseModel):
+    amount: int = Field(gt=0, le=10_000_000, examples=[10000], description="Rs.")
+    method: Literal["Cash", "UPI", "Card", "Bank transfer"] = "Cash"
+    date: Optional[dt.date] = Field(default=None, description="Empty = today")
+    note: str = Field(default="", max_length=100, examples=["Advance"])
+
+
+@api.post("/staff/events/{event_id}/payments", tags=["Staff - Events"])
+def add_event_payment(event_id: int, body: PaymentIn, staff: dict = Depends(current_staff)):
+    e = get_event(event_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if e["total_bill"] and body.amount > e["balance"]:     # no bill yet (enquiry) = any advance is fine
+        raise HTTPException(status_code=400, detail=f"That is more than the balance (Rs. {e['balance']}).")
+    with db() as conn:
+        conn.execute("INSERT INTO event_payments (event_id, date, amount, method, note, created_by) "
+                     "VALUES (?, ?, ?, ?, ?, ?)",
+                     (event_id, (body.date or dt.date.today()).isoformat(), body.amount, body.method,
+                      body.note.strip(), staff["username"]))
+    return {"message": f"Rs. {body.amount} received by {body.method}",
+            "balance": e["balance"] - body.amount}
+
+
+@api.delete("/staff/events/payments/{payment_id}", tags=["Staff - Events"])
+def delete_event_payment(payment_id: int, staff: dict = Depends(admin_only)):
+    with db() as conn:
+        if not conn.execute("DELETE FROM event_payments WHERE id = ?", (payment_id,)).rowcount:
+            raise HTTPException(status_code=404, detail="Payment not found")
+    return {"message": "Payment deleted"}
+
+
+# ---------- Buffet packages ----------
+class PackageIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60, examples=["Veg Classic"])
+    food_type: Literal["Veg", "Non-veg"]
+    price_per_head: int = Field(ge=0, le=100000, examples=[350])
+    cost_per_head: int = Field(ge=0, le=100000, examples=[190])
+    items: list[str] = Field(min_length=1, max_length=40)
+    description: str = Field(default="", max_length=200)
+
+
+def _package_values(body: PackageIn) -> tuple:
+    dishes = {r["dish"]: bool(r["is_veg"]) for r in get_menu_full()}
+    unknown = [d for d in body.items if d not in dishes]
+    if unknown:
+        raise HTTPException(status_code=400, detail="Not on the menu: " + ", ".join(unknown))
+    if body.food_type == "Veg":
+        not_veg = [d for d in body.items if not dishes[d]]
+        if not_veg:
+            raise HTTPException(status_code=400, detail="A veg package cannot have: " + ", ".join(not_veg))
+    return (body.name.strip(), body.food_type, body.price_per_head, body.cost_per_head,
+            json.dumps(list(dict.fromkeys(body.items))), body.description.strip())
+
+
+@api.get("/staff/packages", tags=["Staff - Events"])
+def list_packages(staff: dict = Depends(current_staff)):
+    return get_packages()
+
+
+@api.post("/staff/packages", tags=["Staff - Events"])
+def add_package(body: PackageIn, staff: dict = Depends(admin_only)):
+    with db() as conn:
+        if conn.execute("SELECT 1 FROM event_packages WHERE name = ?", (body.name.strip(),)).fetchone():
+            raise HTTPException(status_code=400, detail="A package with this name already exists")
+        conn.execute("INSERT INTO event_packages (name, food_type, price_per_head, cost_per_head, items, "
+                     "description) VALUES (?, ?, ?, ?, ?, ?)", _package_values(body))
+    return {"message": f"Package '{body.name.strip()}' added"}
+
+
+@api.put("/staff/packages/{package_id}", tags=["Staff - Events"])
+def edit_package(package_id: int, body: PackageIn, staff: dict = Depends(admin_only)):
+    with db() as conn:
+        clash = conn.execute("SELECT 1 FROM event_packages WHERE name = ? AND id != ?",
+                             (body.name.strip(), package_id)).fetchone()
+        if clash:
+            raise HTTPException(status_code=400, detail="Another package already has this name")
+        if not conn.execute("UPDATE event_packages SET name = ?, food_type = ?, price_per_head = ?, "
+                            "cost_per_head = ?, items = ?, description = ? WHERE id = ?",
+                            (*_package_values(body), package_id)).rowcount:
+            raise HTTPException(status_code=404, detail="Package not found")
+    return {"message": f"Package '{body.name.strip()}' updated"}
+
+
+@api.delete("/staff/packages/{package_id}", tags=["Staff - Events"])
+def delete_package(package_id: int, staff: dict = Depends(admin_only)):
+    with db() as conn:
+        if not conn.execute("DELETE FROM event_packages WHERE id = ?", (package_id,)).rowcount:
+            raise HTTPException(status_code=404, detail="Package not found")
+    return {"message": "Package deleted"}
 
 
 # =========================================================
