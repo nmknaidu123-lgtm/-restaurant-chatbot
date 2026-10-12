@@ -1,6 +1,6 @@
 """
 database.py - ONE place where all data is saved: the file restaurant.db (SQLite).
-Menu, restaurant settings, staff, login tokens, discount codes, orders, bookings and events
+Menu, restaurant settings, staff, login tokens, discount codes, orders, bookings, events and expenses
 all live here, so nothing is lost when the server restarts.
 """
 
@@ -86,6 +86,14 @@ def init_db() -> None:
             date       TEXT,
             time       TEXT
         );
+        CREATE TABLE IF NOT EXISTS expenses (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            date        TEXT NOT NULL,
+            category    TEXT NOT NULL,
+            description TEXT,
+            amount      INTEGER NOT NULL,
+            created_by  TEXT
+        );
         CREATE TABLE IF NOT EXISTS events (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             title       TEXT NOT NULL,
@@ -101,6 +109,8 @@ def init_db() -> None:
         for column in ("full_name", "position", "phone", "shift"):
             if column not in existing:
                 conn.execute(f"ALTER TABLE staff ADD COLUMN {column} TEXT")
+        if "daily_wage" not in existing:          # wage per day, for labour cost
+            conn.execute("ALTER TABLE staff ADD COLUMN daily_wage INTEGER NOT NULL DEFAULT 0")
 
         # When each order was paid, so sales are counted on the right day (added later)
         order_cols = {r["name"] for r in conn.execute("PRAGMA table_info(orders)")}

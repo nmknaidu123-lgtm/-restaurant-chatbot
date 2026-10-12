@@ -388,13 +388,14 @@ class NewStaff(BaseModel):
 class StaffUpdate(BaseModel):
     password: Optional[str] = Field(default=None, min_length=6, max_length=100)
     role: Optional[Literal["staff", "admin"]] = None
+    daily_wage: Optional[int] = Field(default=None, ge=0, le=100000, description="Rs. per day")
 
 
 @api.get("/staff/users", tags=["Admin - Staff accounts"])
 def list_staff(staff: dict = Depends(admin_only)):
     with db() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT username, role, full_name, position, phone, shift FROM staff "
+            "SELECT username, role, full_name, position, phone, shift, daily_wage FROM staff "
             "ORDER BY role, position, full_name, username")]
 
 
@@ -415,7 +416,7 @@ def add_staff(body: NewStaff, staff: dict = Depends(admin_only)):
 
 @api.put("/staff/users/{username}", tags=["Admin - Staff accounts"])
 def update_staff(username: str, body: StaffUpdate, staff: dict = Depends(admin_only)):
-    if body.password is None and body.role is None:
+    if body.password is None and body.role is None and body.daily_wage is None:
         raise HTTPException(status_code=400, detail="Nothing to update")
     if username == staff["username"] and body.role == "staff":
         raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
@@ -428,8 +429,10 @@ def update_staff(username: str, body: StaffUpdate, staff: dict = Depends(admin_o
                          (salt, pw_hash, username))
         if body.role:
             conn.execute("UPDATE staff SET role = ? WHERE username = ?", (body.role, username))
-        # Log this user out everywhere so the change takes effect at once
-        if username != staff["username"]:
+        if body.daily_wage is not None:
+            conn.execute("UPDATE staff SET daily_wage = ? WHERE username = ?", (body.daily_wage, username))
+        # Log this user out everywhere so a password or role change takes effect at once
+        if username != staff["username"] and (body.password or body.role):
             conn.execute("DELETE FROM tokens WHERE username = ?", (username,))
     return {"message": f"{username} updated"}
 
@@ -531,3 +534,93 @@ def delete_event(event_id: int, staff: dict = Depends(current_staff)):
         if not conn.execute("DELETE FROM events WHERE id = ?", (event_id,)).rowcount:
             raise HTTPException(status_code=404, detail="Event not found")
     return {"message": "Event deleted"}
+
+
+# =========================================================
+# ADMIN: MONEY (spending, labour cost, profit)
+# =========================================================
+EXPENSE_CATEGORIES = ["Ingredients", "Gas and electricity", "Rent", "Maintenance",
+                      "Extra labour", "Other running cost", "Investment (one-time)"]
+INVESTMENT = "Investment (one-time)"
+
+
+class ExpenseIn(BaseModel):
+    date: dt.date = Field(examples=["2026-10-12"])
+    category: Literal["Ingredients", "Gas and electricity", "Rent", "Maintenance",
+                      "Extra labour", "Other running cost", "Investment (one-time)"]
+    description: str = Field(default="", max_length=120, examples=["Vegetables from market"])
+    amount: int = Field(gt=0, le=10_000_000, examples=[2500], description="Rs.")
+
+
+@api.get("/staff/expenses", tags=["Admin - Money"])
+def list_expenses(day: Optional[dt.date] = None, staff: dict = Depends(admin_only)):
+    d = (day or dt.date.today()).isoformat()
+    with db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM expenses WHERE date = ? ORDER BY id DESC", (d,))]
+
+
+@api.post("/staff/expenses", tags=["Admin - Money"])
+def add_expense(body: ExpenseIn, staff: dict = Depends(admin_only)):
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO expenses (date, category, description, amount, created_by) VALUES (?, ?, ?, ?, ?)",
+            (body.date.isoformat(), body.category, body.description.strip(), body.amount, staff["username"]),
+        )
+    return {"message": f"Rs. {body.amount} added under {body.category}", "id": cur.lastrowid}
+
+
+@api.delete("/staff/expenses/{expense_id}", tags=["Admin - Money"])
+def delete_expense(expense_id: int, staff: dict = Depends(admin_only)):
+    with db() as conn:
+        if not conn.execute("DELETE FROM expenses WHERE id = ?", (expense_id,)).rowcount:
+            raise HTTPException(status_code=404, detail="Expense not found")
+    return {"message": "Expense deleted"}
+
+
+@api.get("/staff/finance", tags=["Admin - Money"])
+def finance_report(day: Optional[dt.date] = None, staff: dict = Depends(admin_only)):
+    """Sales, running costs, labour and profit for one day, plus the 7 days up to it."""
+    day = day or dt.date.today()
+    sales = sales_report(day, staff)                       # reuses the Sales tab numbers
+    week = [w["date"] for w in sales["last_7_days"]]
+    with db() as conn:
+        labour = conn.execute("SELECT COALESCE(SUM(daily_wage), 0) FROM staff").fetchone()[0]
+        paid_staff = conn.execute("SELECT COUNT(*) FROM staff WHERE daily_wage > 0").fetchone()[0]
+        rows = conn.execute("SELECT date, category, amount FROM expenses WHERE date BETWEEN ? AND ?",
+                            (week[0], week[-1])).fetchall()
+        invested_total = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE category = ?",
+                                      (INVESTMENT,)).fetchone()[0]
+
+    costs = {w: 0 for w in week}
+    invested = {w: 0 for w in week}
+    by_category = {c: 0 for c in EXPENSE_CATEGORIES if c != INVESTMENT}
+    for r in rows:
+        if r["category"] == INVESTMENT:
+            invested[r["date"]] += r["amount"]
+        else:
+            costs[r["date"]] += r["amount"]
+            if r["date"] == week[-1]:
+                by_category[r["category"]] = by_category.get(r["category"], 0) + r["amount"]
+
+    days = []
+    for w in sales["last_7_days"]:
+        profit = w["collected"] - costs[w["date"]] - labour
+        days.append({"date": w["date"], "sales": w["collected"], "running_costs": costs[w["date"]],
+                     "labour": labour, "profit": profit, "invested": invested[w["date"]]})
+
+    today = days[-1]
+    s_amt = today["sales"]
+    return {
+        "date": day.isoformat(),
+        "sales": s_amt,
+        "running_costs": today["running_costs"],
+        "labour": labour, "paid_staff": paid_staff,
+        "profit": today["profit"],
+        "invested_today": today["invested"], "invested_total": invested_total,
+        "labour_percent": round(labour * 100 / s_amt) if s_amt else None,
+        "food_cost_percent": round(by_category["Ingredients"] * 100 / s_amt) if s_amt else None,
+        "costs_by_category": by_category,
+        "last_7_days": days,
+        "categories": EXPENSE_CATEGORIES,
+    }

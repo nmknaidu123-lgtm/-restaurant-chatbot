@@ -91,6 +91,10 @@
   .col-labels span { flex: 1; text-align: center; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
   .hbar-track { background: var(--bg); border-radius: 4px; height: 10px; width: 100%; min-width: 80px; }
   .hbar { background: var(--brand); height: 10px; border-radius: 0 4px 4px 0; }
+  .good { color: var(--ok); } .bad-text { color: var(--bad); }
+  .tile.loss { background: var(--bad-soft); border-color: #f5c2bd; }
+  .tile.gain { background: var(--ok-soft); border-color: #bfe0c9; }
+  tr.total td { font-weight: 600; border-top: 2px solid var(--line); }
   #chart-tip { position: fixed; pointer-events: none; background: var(--ink); color: #fff; font-size: 13px; padding: 6px 10px; border-radius: 6px; opacity: 0; transition: opacity .1s; z-index: 10; white-space: nowrap; }
   #chart-tip.show { opacity: 1; }
   #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px;
@@ -126,6 +130,7 @@
   <nav id="tabs">
     <button data-tab="orders" class="active">Orders</button>
     <button data-tab="sales">Sales</button>
+    <button data-tab="money" data-admin>Money</button>
     <button data-tab="bookings">Bookings</button>
     <button data-tab="menu">Menu</button>
     <button data-tab="discounts">Discounts</button>
@@ -203,6 +208,59 @@
           <tbody id="top-body"></tbody>
         </table></div>
         <p class="muted">Amounts use current menu prices. Cancelled orders are not counted.</p>
+      </div>
+    </div>
+
+    <!-- Money (admin) -->
+    <div data-panel="money" class="hidden">
+      <div class="toolbar">
+        <h2 id="money-title">Money today</h2>
+        <div class="row">
+          <label class="muted" for="money-day">Day</label>
+          <input id="money-day" type="date">
+          <button class="small" onclick="loadMoney()">Refresh</button>
+        </div>
+      </div>
+      <div class="tiles" id="money-tiles"></div>
+      <div class="charts">
+        <div class="card">
+          <h2>Add spending</h2>
+          <form id="exp-form" style="display:flex;flex-direction:column;gap:8px">
+            <div class="row">
+              <input id="exp-date" type="date" required>
+              <select id="exp-cat" required></select>
+            </div>
+            <div class="row">
+              <input id="exp-desc" placeholder="What for? (e.g. vegetables)" maxlength="120">
+              <input id="exp-amount" type="number" min="1" placeholder="Amount (Rs.)" required>
+            </div>
+            <div class="row"><button class="primary" type="submit">Add spending</button></div>
+          </form>
+          <p class="muted">"Investment (one-time)" is for things like a new fridge or furniture. It is shown separately and is not taken off the day's profit.</p>
+        </div>
+        <div class="card">
+          <h2>Where the money went</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Category</th><th class="num">Amount</th></tr></thead>
+            <tbody id="money-cats"></tbody>
+          </table></div>
+          <p class="muted" id="labour-note"></p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Spending entries</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Category</th><th>Description</th><th class="num">Amount</th><th>Added by</th><th></th></tr></thead>
+          <tbody id="exp-body"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h2>Last 7 days</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Day</th><th class="num">Sales</th><th class="num">Running costs</th><th class="num">Labour</th><th class="num">Profit</th><th class="num">Invested</th></tr></thead>
+          <tbody id="money-week"></tbody>
+        </table></div>
+        <p class="muted">Profit = sales collected - running costs - labour. Sales use current menu prices.</p>
       </div>
     </div>
 
@@ -330,7 +388,7 @@
         <div class="toolbar"><h2>Staff accounts <span class="muted" id="staff-count"></span></h2>
           <input id="staff-search" placeholder="Search name, position, shift..." oninput="renderStaff()"></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Name</th><th>Position</th><th>Phone</th><th>Shift</th><th>Role</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Position</th><th>Phone</th><th>Shift</th><th class="num">Wage/day (Rs.)</th><th>Role</th><th></th></tr></thead>
           <tbody id="staff-body"></tbody>
         </table></div>
       </div>
@@ -452,7 +510,7 @@ $("logout").addEventListener("click", () => run(async () => {
 }));
 
 // ---------------- Tabs ----------------
-const loaders = { orders: loadOrders, sales: loadSales, bookings: loadBookings, menu: loadMenu,
+const loaders = { orders: loadOrders, sales: loadSales, money: loadMoney, bookings: loadBookings, menu: loadMenu,
                   discounts: loadDiscounts, events: loadEvents, staff: loadStaff, settings: loadSettings };
 
 function openTab(name) {
@@ -631,6 +689,83 @@ async function loadSales() {
     : `<tr><td colspan="4" class="empty">No dishes sold on this day.</td></tr>`;
 }
 $("sales-day").addEventListener("change", () => run(loadSales));
+
+// ---------------- Money (admin) ----------------
+function signedRs(n) { return (n < 0 ? "- " : "") + rs(Math.abs(n)); }
+function dayName(iso) {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+}
+
+async function loadMoney() {
+  if (me.role !== "admin") return;
+  if (!$("money-day").value) $("money-day").value = localToday();
+  const day = $("money-day").value;
+  const [f, list] = await Promise.all([
+    api(`/staff/finance?day=${encodeURIComponent(day)}`),
+    api(`/staff/expenses?day=${encodeURIComponent(day)}`),
+  ]);
+  $("money-title").textContent = f.date === localToday() ? "Money today" : `Money on ${dayName(f.date)}`;
+
+  if (!$("exp-cat").options.length) {
+    $("exp-cat").innerHTML = f.categories.map((c) => `<option>${esc(c)}</option>`).join("");
+  }
+  if (!$("exp-date").value || $("exp-date").dataset.auto !== "0") { $("exp-date").value = day; }
+
+  const loss = f.profit < 0;
+  const tile = (label, value, sub, cls) =>
+    `<div class="tile ${cls || ""}"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+  $("money-tiles").innerHTML =
+    tile("Sales collected", rs(f.sales), "paid orders", "hero") +
+    tile("Running costs", rs(f.running_costs), "ingredients, gas, rent...") +
+    tile("Labour cost", rs(f.labour), `${f.paid_staff} staff with a daily wage`) +
+    tile(loss ? "Loss" : "Profit", signedRs(f.profit), loss ? "costs are more than sales" : "sales minus all costs", loss ? "loss" : "gain") +
+    tile("Labour % of sales", f.labour_percent === null ? "-" : f.labour_percent + "%", "many restaurants aim for 25–35%") +
+    tile("Invested", rs(f.invested_today), `${rs(f.invested_total)} in total so far`);
+
+  const cats = Object.entries(f.costs_by_category);
+  const catTotal = cats.reduce((sum, [, a]) => sum + a, 0);
+  $("money-cats").innerHTML = cats.map(([c, a]) => `<tr><td>${esc(c)}</td><td class="num">${rs(a)}</td></tr>`).join("") +
+    `<tr><td>Labour (daily wages)</td><td class="num">${rs(f.labour)}</td></tr>` +
+    `<tr class="total"><td>Total costs</td><td class="num">${rs(catTotal + f.labour)}</td></tr>`;
+  $("labour-note").textContent = f.paid_staff
+    ? `Labour = the daily wages of ${f.paid_staff} staff. Change wages in the Staff tab.`
+    : "No daily wages set yet. Add each person's wage in the Staff tab (Wage/day column).";
+
+  $("exp-body").innerHTML = list.length ? list.map((e) => `
+    <tr><td>${esc(e.category)}</td><td class="muted">${esc(e.description)}</td><td class="num">${rs(e.amount)}</td>
+      <td class="muted">${esc(e.created_by)}</td>
+      <td><button class="small danger" data-expdel="${esc(e.id)}">Delete</button></td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">No spending added for this day.</td></tr>`;
+  document.querySelectorAll("[data-expdel]").forEach((b) => b.addEventListener("click", () => {
+    if (!confirm("Delete this spending entry?")) return;
+    run(async () => { await api(`/staff/expenses/${encodeURIComponent(b.dataset.expdel)}`, "DELETE"); toast("Deleted"); loadMoney(); });
+  }));
+
+  const sum = (k) => f.last_7_days.reduce((t, d) => t + d[k], 0);
+  $("money-week").innerHTML = f.last_7_days.map((d) => `
+    <tr><td>${esc(dayName(d.date))}</td><td class="num">${rs(d.sales)}</td><td class="num">${rs(d.running_costs)}</td>
+      <td class="num">${rs(d.labour)}</td>
+      <td class="num ${d.profit < 0 ? "bad-text" : "good"}">${signedRs(d.profit)} ${d.profit < 0 ? "(loss)" : ""}</td>
+      <td class="num">${d.invested ? rs(d.invested) : "-"}</td></tr>`).join("") +
+    `<tr class="total"><td>7 days</td><td class="num">${rs(sum("sales"))}</td><td class="num">${rs(sum("running_costs"))}</td>
+      <td class="num">${rs(sum("labour"))}</td>
+      <td class="num ${sum("profit") < 0 ? "bad-text" : "good"}">${signedRs(sum("profit"))} ${sum("profit") < 0 ? "(loss)" : ""}</td>
+      <td class="num">${rs(sum("invested"))}</td></tr>`;
+}
+
+$("money-day").addEventListener("change", () => { $("exp-date").dataset.auto = "1"; run(loadMoney); });
+$("exp-date").addEventListener("change", () => { $("exp-date").dataset.auto = "0"; });
+$("exp-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  run(async () => {
+    const r = await api("/staff/expenses", "POST", {
+      date: $("exp-date").value, category: $("exp-cat").value,
+      description: $("exp-desc").value.trim(), amount: Number($("exp-amount").value),
+    });
+    toast(r.message); $("exp-desc").value = ""; $("exp-amount").value = "";
+    loadMoney();
+  });
+});
 
 // ---------------- Bookings ----------------
 async function loadBookings() {
@@ -813,13 +948,21 @@ function renderStaff() {
     return `<tr><td><strong>${esc(u.full_name || u.username)}</strong>${self ? ' <span class="muted">(you)</span>' : ""}
         <div class="muted">${esc(u.username)}</div></td>
       <td>${esc(u.position)}</td><td class="muted">${esc(u.phone)}</td><td class="muted">${esc(u.shift)}</td>
+      <td class="num"><input type="number" min="0" max="100000" value="${esc(u.daily_wage ?? 0)}" data-wage="${esc(u.username)}" style="width:100px;text-align:right" aria-label="Daily wage for ${esc(u.full_name || u.username)}"></td>
       <td><select data-urole="${esc(u.username)}" ${self ? "disabled" : ""}>
         <option ${u.role === "staff" ? "selected" : ""}>staff</option>
         <option ${u.role === "admin" ? "selected" : ""}>admin</option></select></td>
       <td><div class="actions"><button class="small" data-pw="${esc(u.username)}">Reset password</button>
         ${self ? "" : `<button class="small danger" data-udel="${esc(u.username)}">Delete</button>`}</div></td></tr>`;
-  }).join("") : `<tr><td colspan="6" class="empty">No staff found.</td></tr>`;
+  }).join("") : `<tr><td colspan="7" class="empty">No staff found.</td></tr>`;
 
+  document.querySelectorAll("[data-wage]").forEach((inp) => inp.addEventListener("change", () => run(async () => {
+    const n = Number(inp.value);
+    if (!Number.isInteger(n) || n < 0) { toast("Enter a whole number", true); return; }
+    await api(`/staff/users/${encodeURIComponent(inp.dataset.wage)}`, "PUT", { daily_wage: n });
+    const u = staffRows.find((x) => x.username === inp.dataset.wage); if (u) u.daily_wage = n;
+    toast(`Wage saved: ${rs(n)} per day`);
+  })));
   document.querySelectorAll("[data-urole]").forEach((sel) => sel.addEventListener("change", () => run(async () => {
     await api(`/staff/users/${encodeURIComponent(sel.dataset.urole)}`, "PUT", { role: sel.value });
     toast(`${sel.dataset.urole} is now ${sel.value}`);
