@@ -91,7 +91,8 @@ def init_db() -> None:
             title       TEXT NOT NULL,
             date        TEXT NOT NULL,
             time        TEXT,
-            description TEXT
+            description TEXT,
+            guests      INTEGER NOT NULL DEFAULT 0
         );
         """)
 
@@ -100,6 +101,21 @@ def init_db() -> None:
         for column in ("full_name", "position", "phone", "shift"):
             if column not in existing:
                 conn.execute(f"ALTER TABLE staff ADD COLUMN {column} TEXT")
+
+        # When each order was paid, so sales are counted on the right day (added later)
+        order_cols = {r["name"] for r in conn.execute("PRAGMA table_info(orders)")}
+        if "paid_at" not in order_cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN paid_at TEXT")
+
+        # Phone number for bookings taken over the phone (added later - safe on old databases)
+        booking_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bookings)")}
+        if "phone" not in booking_cols:
+            conn.execute("ALTER TABLE bookings ADD COLUMN phone TEXT")
+
+        # Number of plates / guests for each event (added later - safe on old databases)
+        event_cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)")}
+        if "guests" not in event_cols:
+            conn.execute("ALTER TABLE events ADD COLUMN guests INTEGER NOT NULL DEFAULT 0")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))

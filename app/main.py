@@ -7,6 +7,7 @@ API:    http://127.0.0.1:8000/docs
 """
 
 import json
+import secrets
 import datetime as dt
 from pathlib import Path
 from typing import Literal, Optional
@@ -16,7 +17,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.database import db, init_db, new_password_record
-from app.data import (get_setting, set_setting, get_menu_by_category, get_menu_full,
+from app.data import (get_setting, set_setting, get_menu, get_menu_by_category, get_menu_full,
                       get_order_cart, save_order, get_order_status, save_booking, get_booking,
                       get_events)
 from app.graph import bot, session_state, clear_session
@@ -127,12 +128,116 @@ def all_orders(staff: dict = Depends(current_staff)):
 
 @api.put("/staff/orders/{session_id}/status", tags=["Staff - Orders"])
 def update_status(session_id: str, body: StatusUpdate, staff: dict = Depends(current_staff)):
+    now = dt.datetime.now().isoformat(timespec="seconds")
     with db() as conn:
-        changed = conn.execute("UPDATE orders SET status = ? WHERE session_id = ?",
-                               (body.status, session_id)).rowcount
+        # paid_at = the moment it became paid; cleared if the status moves away from paid
+        changed = conn.execute(
+            "UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' "
+            "THEN COALESCE(paid_at, ?) ELSE NULL END WHERE session_id = ?",
+            (body.status, body.status, now, session_id)).rowcount
     if not changed:
         raise HTTPException(status_code=404, detail="No order for this session")
     return {"session_id": session_id, "status": body.status, "updated_by": staff["username"]}
+
+
+class OrderLine(BaseModel):
+    dish: str = Field(min_length=1, max_length=60, examples=["Chicken Biryani"])
+    quantity: int = Field(ge=1, le=100, examples=[2])
+
+
+class StaffOrder(BaseModel):
+    customer: str = Field(min_length=1, max_length=40, examples=["Table 5"],
+                          description="Table number or customer name")
+    items: list[OrderLine] = Field(min_length=1, max_length=50)
+
+
+@api.post("/staff/orders", tags=["Staff - Orders"])
+def take_order(body: StaffOrder, staff: dict = Depends(current_staff)):
+    """A waiter takes an order (dine-in table or phone). Adds to the table's open order if there is one."""
+    menu = get_menu()                       # only dishes that are available now
+    unknown = [line.dish for line in body.items if line.dish not in menu]
+    if unknown:
+        raise HTTPException(status_code=400,
+                            detail="Not on the menu or sold out: " + ", ".join(unknown))
+
+    # "Table 5" -> "table-5"
+    session_id = "-".join("".join(c if c.isalnum() else " " for c in body.customer.lower()).split())
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Enter a table number or customer name")
+
+    with db() as conn:
+        row = conn.execute("SELECT cart, status FROM orders WHERE session_id = ?", (session_id,)).fetchone()
+    if row and row["status"] in ("paid", "cancelled"):
+        session_id = f"{session_id}-{secrets.token_hex(2)}"   # finished order: start a new one
+        row = None
+
+    cart = json.loads(row["cart"]) if row else {}
+    for line in body.items:
+        cart[line.dish] = cart.get(line.dish, 0) + line.quantity
+    save_order(session_id, cart)
+    return {"message": f"Order saved for {body.customer.strip()}", "session_id": session_id,
+            "cart": cart, **calculate_bill(session_id, cart), "taken_by": staff["username"]}
+
+
+@api.get("/staff/sales", tags=["Staff - Sales"])
+def sales_report(day: Optional[dt.date] = None, staff: dict = Depends(current_staff)):
+    """How business is going on one day (default: today), plus the 7 days up to it."""
+    day = day or dt.date.today()
+    d = day.isoformat()
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM orders").fetchall()
+        bookings = conn.execute("SELECT people FROM bookings WHERE date = ?", (d,)).fetchall()
+        events = conn.execute("SELECT guests FROM events WHERE date = ?", (d,)).fetchall()
+
+    week = [(day - dt.timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+    collected_by_day = {w: 0 for w in week}
+    by_hour = [0] * 24
+    dishes: dict[str, dict] = {}
+    orders = paid = open_orders = cancelled = 0
+    collected = open_amount = items_sold = 0
+
+    for r in rows:
+        cart = json.loads(r["cart"])
+        total = calculate_bill(r["session_id"], cart)["total"]
+        placed = r["updated_at"] or ""
+        paid_on = (r["paid_at"] or placed) if r["status"] == "paid" else ""
+
+        if paid_on[:10] in collected_by_day:            # sales collected, by day paid
+            collected_by_day[paid_on[:10]] += total
+        if paid_on[:10] == d:
+            paid += 1
+            collected += total
+
+        if placed[:10] != d:                            # the rest is about orders placed today
+            continue
+        orders += 1
+        if r["status"] == "cancelled":
+            cancelled += 1
+            continue
+        if r["status"] != "paid":
+            open_orders += 1
+            open_amount += total
+        if len(placed) >= 13 and placed[11:13].isdigit():
+            by_hour[int(placed[11:13])] += total
+        for dish, qty in cart.items():
+            items_sold += qty
+            entry = dishes.setdefault(dish, {"dish": dish, "quantity": 0, "revenue": 0})
+            entry["quantity"] += qty
+            entry["revenue"] += calculate_bill("", {dish: qty})["subtotal"]
+
+    top = sorted(dishes.values(), key=lambda x: (-x["quantity"], -x["revenue"]))[:8]
+    return {
+        "date": d,
+        "collected": collected, "paid_orders": paid,
+        "average_bill": round(collected / paid) if paid else 0,
+        "orders": orders, "open_orders": open_orders, "open_amount": open_amount,
+        "cancelled": cancelled, "items_sold": items_sold,
+        "bookings": len(bookings), "booked_guests": sum(b["people"] or 0 for b in bookings),
+        "event_plates": sum(e["guests"] or 0 for e in events),
+        "top_dishes": top,
+        "by_hour": [{"hour": h, "amount": a} for h, a in enumerate(by_hour)],
+        "last_7_days": [{"date": w, "collected": collected_by_day[w]} for w in week],
+    }
 
 
 @api.get("/staff/bookings", tags=["Staff - Orders"])
@@ -140,6 +245,28 @@ def all_bookings(staff: dict = Depends(current_staff)):
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM bookings ORDER BY date, time")]
     return {"count": len(rows), "bookings": rows}
+
+
+class PhoneBooking(BaseModel):
+    name: str = Field(min_length=1, max_length=60, examples=["Ravi Kumar"])
+    phone: str = Field(default="", max_length=20, examples=["9876543210"])
+    people: int = Field(ge=1, le=500, examples=[4])
+    date: dt.date = Field(examples=["2026-10-12"], description="YYYY-MM-DD")
+    time: str = Field(min_length=1, max_length=30, examples=["8 PM"])
+
+
+@api.post("/staff/bookings", tags=["Staff - Orders"])
+def add_booking(body: PhoneBooking, staff: dict = Depends(current_staff)):
+    """Staff book a table for a customer who called the restaurant."""
+    session_id = "phone-" + secrets.token_hex(3)          # e.g. phone-4f9a2c
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO bookings (session_id, name, people, date, time, phone) VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, body.name.strip(), body.people, body.date.isoformat(),
+             body.time.strip(), body.phone.strip()),
+        )
+    return {"message": f"Table booked for {body.name.strip()}, {body.people} people",
+            "session_id": session_id, "booked_by": staff["username"]}
 
 
 @api.delete("/staff/bookings/{session_id}", tags=["Staff - Orders"])
@@ -347,6 +474,11 @@ class EventIn(BaseModel):
     date: dt.date = Field(examples=["2026-10-17"], description="YYYY-MM-DD")
     time: str = Field(default="", max_length=30, examples=["8 PM"])
     description: str = Field(default="", max_length=500, examples=["Live ghazals with dinner"])
+    guests: int = Field(default=0, ge=0, le=10000, examples=[50], description="Plates / people expected")
+
+
+class GuestsUpdate(BaseModel):
+    guests: int = Field(ge=0, le=10000, examples=[60])
 
 
 @api.get("/events", tags=["Customer"])
@@ -365,10 +497,32 @@ def all_events(staff: dict = Depends(current_staff)):
 def add_event(body: EventIn, staff: dict = Depends(current_staff)):
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO events (title, date, time, description) VALUES (?, ?, ?, ?)",
-            (body.title.strip(), body.date.isoformat(), body.time.strip(), body.description.strip()),
+            "INSERT INTO events (title, date, time, description, guests) VALUES (?, ?, ?, ?, ?)",
+            (body.title.strip(), body.date.isoformat(), body.time.strip(), body.description.strip(),
+             body.guests),
         )
     return {"message": f"Event '{body.title.strip()}' added", "id": cur.lastrowid}
+
+
+@api.patch("/staff/events/{event_id}/guests", tags=["Staff - Events"])
+def update_guests(event_id: int, body: GuestsUpdate, staff: dict = Depends(current_staff)):
+    """Change how many plates / guests are expected for an event."""
+    with db() as conn:
+        if not conn.execute("UPDATE events SET guests = ? WHERE id = ?",
+                            (body.guests, event_id)).rowcount:
+            raise HTTPException(status_code=404, detail="Event not found")
+    return {"id": event_id, "guests": body.guests}
+
+
+@api.get("/staff/events/today", tags=["Staff - Events"])
+def events_today(staff: dict = Depends(current_staff)):
+    """Today's events and the total number of plates needed."""
+    today = dt.date.today().isoformat()
+    with db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM events WHERE date = ? ORDER BY time", (today,))]
+    return {"date": today, "events": len(rows),
+            "total_plates": sum(r["guests"] or 0 for r in rows), "list": rows}
 
 
 @api.delete("/staff/events/{event_id}", tags=["Staff - Events"])
