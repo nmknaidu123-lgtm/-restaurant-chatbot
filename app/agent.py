@@ -80,12 +80,12 @@ def make_tools(staff: dict) -> list:
 
     @tool
     def upcoming_events() -> list:
-        """Upcoming events: date, time, plates (guests), price per head, total bill,
+        """Upcoming events: date, time, dishes on the event menu, plates (guests), price per head, total bill,
         investment (our cost), expected profit, advance paid and balance still to collect."""
         return [{"title": e["title"], "date": e["date"], "time": e["time"], "customer": e.get("customer"),
                  "plates": e.get("guests", 0), "price_per_head": e.get("price_per_head", 0),
                  "total_bill": e["total_bill"], "investment": e["investment"], "profit": e["profit"],
-                 "advance": e.get("advance", 0), "balance": e["balance"]}
+                 "advance": e.get("advance", 0), "balance": e["balance"], "menu": e.get("menu", [])}
                 for e in get_events(upcoming_only=True)]
 
     @tool

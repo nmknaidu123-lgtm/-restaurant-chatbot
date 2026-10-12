@@ -100,6 +100,15 @@
   .step { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #fff; border: 1px solid var(--line); color: var(--muted); }
   .step.changed { background: var(--ok-soft); border-color: #bfe0c9; color: var(--ok); }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .menu-picker { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+  .menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 12px;
+               max-height: 220px; overflow-y: auto; margin-top: 8px; }
+  .menu-grid label { display: flex; gap: 8px; align-items: center; font-size: 14px; padding: 3px 0; }
+  .menu-grid .price { margin-left: auto; color: var(--muted); font-size: 13px; }
+  .picked { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .picked span { background: var(--brand-soft); color: var(--brand-dark); border-radius: 99px; padding: 2px 4px 2px 10px; font-size: 13px; }
+  .picked button { border: 0; background: none; padding: 0 6px; color: var(--brand-dark); }
+  .ev-menu { font-size: 13px; color: var(--muted); margin-top: 2px; }
   .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; font-size: 13px; }
   .cat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .cat-chips button { border-radius: 99px; padding: 6px 12px; font-size: 14px; }
@@ -415,6 +424,18 @@
             <label class="field"><span class="muted">Cost per head (Rs.)</span><input id="e-cost" type="number" min="0" value="0"></label>
             <label class="field"><span class="muted">Extra costs (Rs.)</span><input id="e-extra" type="number" min="0" value="0" title="Decoration, music, hall..."></label>
             <label class="field"><span class="muted">Advance paid (Rs.)</span><input id="e-advance" type="number" min="0" value="0"></label>
+          </div>
+          <div class="menu-picker">
+            <div class="row" style="justify-content:space-between">
+              <strong>Event menu <span class="muted" id="ev-menu-count">(no dishes yet)</span></strong>
+              <div class="row">
+                <select id="ev-menu-cat" aria-label="Category"><option value="">All categories</option></select>
+                <input id="ev-menu-search" placeholder="Search dishes..." aria-label="Search dishes">
+              </div>
+            </div>
+            <div class="menu-grid" id="ev-menu-grid"></div>
+            <div class="picked" id="ev-menu-picked"></div>
+            <p class="muted" id="ev-menu-price" style="margin:8px 0 0"></p>
           </div>
           <p id="event-preview" class="muted" style="margin:0"></p>
           <div class="row">
@@ -1070,6 +1091,44 @@ $("disc-form").addEventListener("submit", (e) => {
 // ---------------- Events ----------------
 let eventRows = [];
 let editingEventId = null;
+let evMenuAll = [];          // full restaurant menu [{dish, price, category, available}]
+let evMenuPicked = [];       // dish names chosen for this event
+
+function renderEventMenu() {
+  const cat = $("ev-menu-cat").value, q = $("ev-menu-search").value.trim().toLowerCase();
+  const rows = evMenuAll.filter((r) => (!cat || r.category === cat) && (!q || r.dish.toLowerCase().includes(q)));
+  $("ev-menu-grid").innerHTML = rows.length ? rows.map((r) => `
+    <label><input type="checkbox" data-evdish="${esc(r.dish)}" ${evMenuPicked.includes(r.dish) ? "checked" : ""}>
+      <span>${esc(r.dish)}</span><span class="price">${rs(r.price)}</span></label>`).join("")
+    : '<p class="muted" style="margin:0">No dishes found.</p>';
+  document.querySelectorAll("[data-evdish]").forEach((cb) => cb.addEventListener("change", () => {
+    const d = cb.dataset.evdish;
+    evMenuPicked = cb.checked ? [...evMenuPicked, d] : evMenuPicked.filter((x) => x !== d);
+    renderPicked();
+  }));
+  renderPicked();
+}
+
+function renderPicked() {
+  $("ev-menu-count").textContent = evMenuPicked.length ? `(${evMenuPicked.length} dishes)` : "(no dishes yet)";
+  $("ev-menu-picked").innerHTML = evMenuPicked.map((d, i) =>
+    `<span>${esc(d)}<button type="button" data-unpick="${i}" aria-label="Remove ${esc(d)}">×</button></span>`).join("");
+  document.querySelectorAll("[data-unpick]").forEach((b) => b.addEventListener("click", () => {
+    evMenuPicked.splice(Number(b.dataset.unpick), 1);
+    renderEventMenu();
+  }));
+  const priceOf = Object.fromEntries(evMenuAll.map((r) => [r.dish, r.price]));
+  const perPlate = evMenuPicked.reduce((t, d) => t + (priceOf[d] || 0), 0);
+  $("ev-menu-price").innerHTML = evMenuPicked.length
+    ? `Menu price: <strong>${rs(perPlate)}</strong> per plate (1 portion of each dish). ` +
+      `<button type="button" class="small" id="use-menu-price">Use as price per head</button>`
+    : "Tick the dishes that will be served at this event.";
+  const btn = $("use-menu-price");
+  if (btn) btn.addEventListener("click", () => { $("e-price").value = perPlate; updateEventPreview(); });
+}
+
+$("ev-menu-cat").addEventListener("change", renderEventMenu);
+$("ev-menu-search").addEventListener("input", renderEventMenu);
 
 const evNum = (id) => Number($(id).value || 0);
 
@@ -1090,6 +1149,8 @@ function updateEventPreview() {
 
 function resetEventForm() {
   editingEventId = null;
+  evMenuPicked = []; $("ev-menu-search").value = ""; $("ev-menu-cat").value = "";
+  renderEventMenu();
   $("event-form").reset();
   ["e-guests", "e-price", "e-cost", "e-extra", "e-advance"].forEach((id) => ($(id).value = 0));
   $("event-form-title").textContent = "Add an event";
@@ -1105,6 +1166,7 @@ function editEvent(id) {
   $("e-customer").value = e.customer || ""; $("e-phone").value = e.phone || ""; $("e-desc").value = e.description || "";
   $("e-guests").value = e.guests || 0; $("e-price").value = e.price_per_head || 0; $("e-cost").value = e.cost_per_head || 0;
   $("e-extra").value = e.extra_cost || 0; $("e-advance").value = e.advance || 0;
+  evMenuPicked = [...(e.menu || [])]; renderEventMenu();
   $("event-form-title").textContent = "Edit: " + e.title;
   $("event-save").textContent = "Save changes";
   updateEventPreview();
@@ -1112,8 +1174,13 @@ function editEvent(id) {
 }
 
 async function loadEvents() {
-  const [events, today] = await Promise.all([api("/staff/events"), api("/staff/events/today")]);
+  const [events, today, menu] = await Promise.all([api("/staff/events"), api("/staff/events/today"), api("/staff/menu")]);
   eventRows = events;
+  evMenuAll = menu;
+  const curCat = $("ev-menu-cat").value;
+  $("ev-menu-cat").innerHTML = `<option value="">All categories</option>` +
+    [...new Set(menu.map((r) => r.category))].map((c) => `<option ${c === curCat ? "selected" : ""}>${esc(c)}</option>`).join("");
+  renderEventMenu();
   const todayStr = today.date;
   $("today-summary").innerHTML = today.events
     ? `<strong>${esc(today.total_plates)} plates</strong> needed for ${esc(today.events)} event(s) today: ` +
@@ -1137,7 +1204,8 @@ async function loadEvents() {
     <tr class="${e.date < todayStr ? "off" : ""}">
       <td><strong>${esc(e.title)}</strong>${e.date < todayStr ? ' <span class="muted">(past)</span>' : ""}${e.date === todayStr ? ' <span class="role">today</span>' : ""}
         ${e.customer ? `<div class="muted">${esc(e.customer)}${e.phone ? " · " + esc(e.phone) : ""}</div>` : ""}
-        ${e.description ? `<div class="muted">${esc(e.description)}</div>` : ""}</td>
+        ${e.description ? `<div class="muted">${esc(e.description)}</div>` : ""}
+        ${e.menu && e.menu.length ? `<div class="ev-menu"><strong>Menu:</strong> ${esc(e.menu.join(", "))}</div>` : ""}</td>
       <td style="white-space:nowrap">${esc(e.date)}${e.time ? `<div class="muted">${esc(e.time)}</div>` : ""}</td>
       <td class="num"><input type="number" min="0" max="10000" value="${esc(e.guests ?? 0)}" data-guests="${esc(e.id)}" style="width:80px;text-align:right" aria-label="Plates for ${esc(e.title)}"></td>
       <td class="num">${e.price_per_head ? rs(e.price_per_head) : "-"}</td>
@@ -1170,7 +1238,7 @@ $("event-form").addEventListener("submit", (e) => {
       title: $("e-title").value.trim(), date: $("e-date").value, time: $("e-time").value.trim(),
       description: $("e-desc").value.trim(), customer: $("e-customer").value.trim(), phone: $("e-phone").value.trim(),
       guests: evNum("e-guests"), price_per_head: evNum("e-price"), cost_per_head: evNum("e-cost"),
-      extra_cost: evNum("e-extra"), advance: evNum("e-advance"),
+      extra_cost: evNum("e-extra"), advance: evNum("e-advance"), menu: evMenuPicked,
     };
     const r = editingEventId
       ? await api(`/staff/events/${editingEventId}`, "PUT", body)

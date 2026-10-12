@@ -501,15 +501,23 @@ class EventIn(BaseModel):
     advance: int = Field(default=0, ge=0, le=10_000_000, examples=[5000], description="Advance already paid (Rs.)")
     customer: str = Field(default="", max_length=60, examples=["Ravi Kumar"])
     phone: str = Field(default="", max_length=20, examples=["9876543210"])
+    menu: list[str] = Field(default_factory=list, max_length=60,
+                            examples=[["Veg Biryani", "Paneer Butter Masala", "Gulab Jamun"]],
+                            description="Dishes served at the event (names from the menu)")
 
 
 EVENT_FIELDS = ("title", "date", "time", "description", "guests", "price_per_head",
-                "cost_per_head", "extra_cost", "advance", "customer", "phone")
+                "cost_per_head", "extra_cost", "advance", "customer", "phone", "menu")
 
 
 def _event_values(body: EventIn) -> tuple:
+    known = {r["dish"] for r in get_menu_full()}
+    unknown = [d for d in body.menu if d not in known]
+    if unknown:
+        raise HTTPException(status_code=400, detail="Not on the menu: " + ", ".join(unknown))
     d = body.model_dump()
     d["date"] = body.date.isoformat()
+    d["menu"] = json.dumps(list(dict.fromkeys(body.menu)))     # remove duplicates, keep order
     return tuple(d[f].strip() if isinstance(d[f], str) else d[f] for f in EVENT_FIELDS)
 
 

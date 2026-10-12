@@ -136,7 +136,8 @@ def init_db() -> None:
                              ("cost_per_head", "INTEGER NOT NULL DEFAULT 0"),
                              ("extra_cost", "INTEGER NOT NULL DEFAULT 0"),
                              ("advance", "INTEGER NOT NULL DEFAULT 0"),
-                             ("customer", "TEXT"), ("phone", "TEXT")):
+                             ("customer", "TEXT"), ("phone", "TEXT"),
+                             ("menu", "TEXT")):              # JSON list of dish names served
             if column not in event_cols:
                 conn.execute(f"ALTER TABLE events ADD COLUMN {column} {kind}")
 

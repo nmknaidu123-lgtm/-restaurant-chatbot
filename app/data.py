@@ -137,6 +137,8 @@ def event_totals(e: dict) -> dict:
     investment = plates x cost per head + extra (what it costs us)
     profit     = bill - investment
     balance    = bill - advance                 (still to collect)"""
+    menu = e.get("menu")
+    e["menu"] = json.loads(menu) if isinstance(menu, str) and menu else (menu or [])
     plates = e.get("guests") or 0
     bill = plates * (e.get("price_per_head") or 0)
     investment = plates * (e.get("cost_per_head") or 0) + (e.get("extra_cost") or 0)
