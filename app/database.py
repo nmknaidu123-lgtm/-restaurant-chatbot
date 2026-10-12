@@ -131,6 +131,14 @@ def init_db() -> None:
         event_cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)")}
         if "guests" not in event_cols:
             conn.execute("ALTER TABLE events ADD COLUMN guests INTEGER NOT NULL DEFAULT 0")
+        # Money for each event (added later - safe on old databases)
+        for column, kind in (("price_per_head", "INTEGER NOT NULL DEFAULT 0"),
+                             ("cost_per_head", "INTEGER NOT NULL DEFAULT 0"),
+                             ("extra_cost", "INTEGER NOT NULL DEFAULT 0"),
+                             ("advance", "INTEGER NOT NULL DEFAULT 0"),
+                             ("customer", "TEXT"), ("phone", "TEXT")):
+            if column not in event_cols:
+                conn.execute(f"ALTER TABLE events ADD COLUMN {column} {kind}")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))

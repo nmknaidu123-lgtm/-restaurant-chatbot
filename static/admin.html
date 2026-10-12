@@ -100,6 +100,7 @@
   .step { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #fff; border: 1px solid var(--line); color: var(--muted); }
   .step.changed { background: var(--ok-soft); border-color: #bfe0c9; color: var(--ok); }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; font-size: 13px; }
   .cat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .cat-chips button { border-radius: 99px; padding: 6px 12px; font-size: 14px; }
   .cat-chips button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
@@ -394,22 +395,39 @@
         <h2 style="margin-bottom:4px">Today</h2>
         <p id="today-summary" style="margin:0;font-size:18px">Loading...</p>
       </div>
+      <div class="tiles" id="event-tiles"></div>
       <div class="card">
-        <h2>Add an event</h2>
-        <form class="row" id="event-form">
-          <input id="e-title" placeholder="Event name (e.g. Live music night)" required maxlength="80">
-          <input id="e-date" type="date" required>
-          <input id="e-time" placeholder="Time (e.g. 8 PM)" maxlength="30">
-          <input id="e-desc" placeholder="Short description (optional)" maxlength="500">
-          <input id="e-guests" type="number" min="0" max="10000" placeholder="Plates / guests">
-          <button class="primary" type="submit">Add event</button>
+        <h2 id="event-form-title">Add an event</h2>
+        <form id="event-form" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row">
+            <input id="e-title" placeholder="Event name (e.g. Birthday party)" required maxlength="80">
+            <input id="e-date" type="date" required aria-label="Date">
+            <input id="e-time" placeholder="Time (e.g. 8 PM)" maxlength="30">
+          </div>
+          <div class="row">
+            <input id="e-customer" placeholder="Customer name (optional)" maxlength="60">
+            <input id="e-phone" placeholder="Phone (optional)" maxlength="20" inputmode="tel">
+            <input id="e-desc" placeholder="Short description (optional)" maxlength="500">
+          </div>
+          <div class="row">
+            <label class="field"><span class="muted">Plates / guests</span><input id="e-guests" type="number" min="0" max="10000" value="0"></label>
+            <label class="field"><span class="muted">Price per head (Rs.)</span><input id="e-price" type="number" min="0" value="0"></label>
+            <label class="field"><span class="muted">Cost per head (Rs.)</span><input id="e-cost" type="number" min="0" value="0"></label>
+            <label class="field"><span class="muted">Extra costs (Rs.)</span><input id="e-extra" type="number" min="0" value="0" title="Decoration, music, hall..."></label>
+            <label class="field"><span class="muted">Advance paid (Rs.)</span><input id="e-advance" type="number" min="0" value="0"></label>
+          </div>
+          <p id="event-preview" class="muted" style="margin:0"></p>
+          <div class="row">
+            <button class="primary" type="submit" id="event-save">Add event</button>
+            <button type="button" onclick="resetEventForm()">Clear</button>
+          </div>
         </form>
-        <p class="muted">Customers can ask the chatbot "Any events this week?" to see upcoming events.</p>
+        <p class="muted">Price per head = what the customer pays per plate. Cost per head = your food cost per plate. Extra costs = decoration, music, hall and so on. Customers using the chatbot only see the event name, date, time and description.</p>
       </div>
       <div class="card">
         <div class="toolbar"><h2>All events</h2><button class="small" onclick="loadEvents()">Refresh</button></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Event</th><th>Date</th><th>Time</th><th class="num">Plates</th><th>Description</th><th></th></tr></thead>
+          <thead><tr><th>Event</th><th>Date</th><th class="num">Plates</th><th class="num">Per head</th><th class="num">Total bill</th><th class="num">Investment</th><th class="num">Profit</th><th class="num">Advance</th><th class="num">Balance</th><th></th></tr></thead>
           <tbody id="events-body"></tbody>
         </table></div>
       </div>
@@ -1050,27 +1068,95 @@ $("disc-form").addEventListener("submit", (e) => {
 });
 
 // ---------------- Events ----------------
+let eventRows = [];
+let editingEventId = null;
+
+const evNum = (id) => Number($(id).value || 0);
+
+function eventFormTotals() {
+  const plates = evNum("e-guests"), bill = plates * evNum("e-price");
+  const investment = plates * evNum("e-cost") + evNum("e-extra");
+  return { bill, investment, profit: bill - investment, balance: Math.max(bill - evNum("e-advance"), 0) };
+}
+
+function updateEventPreview() {
+  const t = eventFormTotals();
+  $("event-preview").innerHTML = t.bill || t.investment
+    ? `Total bill <strong>${rs(t.bill)}</strong> · Investment <strong>${rs(t.investment)}</strong> · ` +
+      `${t.profit < 0 ? '<span class="bad-text">Loss' : '<span class="good">Profit'} <strong>${signedRs(t.profit)}</strong></span> · Balance to collect <strong>${rs(t.balance)}</strong>`
+    : "";
+}
+["e-guests", "e-price", "e-cost", "e-extra", "e-advance"].forEach((id) => $(id).addEventListener("input", updateEventPreview));
+
+function resetEventForm() {
+  editingEventId = null;
+  $("event-form").reset();
+  ["e-guests", "e-price", "e-cost", "e-extra", "e-advance"].forEach((id) => ($(id).value = 0));
+  $("event-form-title").textContent = "Add an event";
+  $("event-save").textContent = "Add event";
+  updateEventPreview();
+}
+
+function editEvent(id) {
+  const e = eventRows.find((x) => x.id === id);
+  if (!e) return;
+  editingEventId = id;
+  $("e-title").value = e.title; $("e-date").value = e.date; $("e-time").value = e.time || "";
+  $("e-customer").value = e.customer || ""; $("e-phone").value = e.phone || ""; $("e-desc").value = e.description || "";
+  $("e-guests").value = e.guests || 0; $("e-price").value = e.price_per_head || 0; $("e-cost").value = e.cost_per_head || 0;
+  $("e-extra").value = e.extra_cost || 0; $("e-advance").value = e.advance || 0;
+  $("event-form-title").textContent = "Edit: " + e.title;
+  $("event-save").textContent = "Save changes";
+  updateEventPreview();
+  $("event-form").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 async function loadEvents() {
   const [events, today] = await Promise.all([api("/staff/events"), api("/staff/events/today")]);
+  eventRows = events;
+  const todayStr = today.date;
   $("today-summary").innerHTML = today.events
     ? `<strong>${esc(today.total_plates)} plates</strong> needed for ${esc(today.events)} event(s) today: ` +
-      today.list.map((e) => `${esc(e.title)} (${esc(e.guests)})`).join(", ")
+      today.list.map((e) => `${esc(e.title)} (${esc(e.guests)})`).join(", ") +
+      (today.balance ? ` · <strong>${rs(today.balance)}</strong> still to collect` : "")
     : "No events today.";
-  const todayStr = today.date;
+
+  const upcoming = events.filter((e) => e.date >= todayStr);
+  const sum = (k) => upcoming.reduce((t, e) => t + (e[k] || 0), 0);
+  const tile = (label, value, sub, cls) =>
+    `<div class="tile ${cls || ""}"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+  const profit = sum("profit");
+  $("event-tiles").innerHTML =
+    tile("Upcoming events", upcoming.length, `${sum("guests")} plates in total`, "hero") +
+    tile("Total bills", rs(sum("total_bill")), "what customers will pay") +
+    tile("Total investment", rs(sum("investment")), "food cost + extra costs") +
+    tile(profit < 0 ? "Expected loss" : "Expected profit", signedRs(profit), "bills minus investment", profit < 0 ? "loss" : "gain") +
+    tile("Advance received", rs(sum("advance")), `${rs(sum("balance"))} still to collect`);
+
   $("events-body").innerHTML = events.length ? events.map((e) => `
     <tr class="${e.date < todayStr ? "off" : ""}">
-      <td><strong>${esc(e.title)}</strong>${e.date < todayStr ? ' <span class="muted">(past)</span>' : ""}${e.date === todayStr ? ' <span class="role">today</span>' : ""}</td>
-      <td>${esc(e.date)}</td><td>${esc(e.time)}</td>
-      <td class="num"><input type="number" min="0" max="10000" value="${esc(e.guests ?? 0)}" data-guests="${esc(e.id)}" style="width:90px;text-align:right" aria-label="Plates for ${esc(e.title)}"></td>
-      <td class="muted">${esc(e.description)}</td>
-      <td><button class="small danger" data-evdel="${esc(e.id)}">Delete</button></td></tr>`).join("")
-    : `<tr><td colspan="6" class="empty">No events yet.</td></tr>`;
+      <td><strong>${esc(e.title)}</strong>${e.date < todayStr ? ' <span class="muted">(past)</span>' : ""}${e.date === todayStr ? ' <span class="role">today</span>' : ""}
+        ${e.customer ? `<div class="muted">${esc(e.customer)}${e.phone ? " · " + esc(e.phone) : ""}</div>` : ""}
+        ${e.description ? `<div class="muted">${esc(e.description)}</div>` : ""}</td>
+      <td style="white-space:nowrap">${esc(e.date)}${e.time ? `<div class="muted">${esc(e.time)}</div>` : ""}</td>
+      <td class="num"><input type="number" min="0" max="10000" value="${esc(e.guests ?? 0)}" data-guests="${esc(e.id)}" style="width:80px;text-align:right" aria-label="Plates for ${esc(e.title)}"></td>
+      <td class="num">${e.price_per_head ? rs(e.price_per_head) : "-"}</td>
+      <td class="num"><strong>${rs(e.total_bill)}</strong></td>
+      <td class="num">${rs(e.investment)}</td>
+      <td class="num ${e.profit < 0 ? "bad-text" : "good"}">${signedRs(e.profit)}${e.profit < 0 ? " (loss)" : ""}</td>
+      <td class="num">${rs(e.advance || 0)}</td>
+      <td class="num">${!e.total_bill ? "-" : e.balance ? `<strong>${rs(e.balance)}</strong>` : '<span class="good">Paid</span>'}</td>
+      <td><div class="actions"><button class="small" data-evedit="${esc(e.id)}">Edit</button>
+        <button class="small danger" data-evdel="${esc(e.id)}">Delete</button></div></td></tr>`).join("")
+    : `<tr><td colspan="10" class="empty">No events yet.</td></tr>`;
+
   document.querySelectorAll("[data-guests]").forEach((inp) => inp.addEventListener("change", () => run(async () => {
     const n = Number(inp.value);
     if (!Number.isInteger(n) || n < 0) { toast("Enter a whole number of plates", true); return; }
     await api(`/staff/events/${encodeURIComponent(inp.dataset.guests)}/guests`, "PATCH", { guests: n });
     toast(`Plates updated to ${n}`); loadEvents();
   })));
+  document.querySelectorAll("[data-evedit]").forEach((b) => b.addEventListener("click", () => editEvent(Number(b.dataset.evedit))));
   document.querySelectorAll("[data-evdel]").forEach((btn) => btn.addEventListener("click", () => {
     if (!confirm("Delete this event?")) return;
     run(async () => { await api(`/staff/events/${encodeURIComponent(btn.dataset.evdel)}`, "DELETE"); toast("Event deleted"); loadEvents(); });
@@ -1080,12 +1166,16 @@ async function loadEvents() {
 $("event-form").addEventListener("submit", (e) => {
   e.preventDefault();
   run(async () => {
-    const r = await api("/staff/events", "POST", {
-      title: $("e-title").value.trim(), date: $("e-date").value,
-      time: $("e-time").value.trim(), description: $("e-desc").value.trim(),
-      guests: Number($("e-guests").value || 0),
-    });
-    toast(r.message); $("event-form").reset(); loadEvents();
+    const body = {
+      title: $("e-title").value.trim(), date: $("e-date").value, time: $("e-time").value.trim(),
+      description: $("e-desc").value.trim(), customer: $("e-customer").value.trim(), phone: $("e-phone").value.trim(),
+      guests: evNum("e-guests"), price_per_head: evNum("e-price"), cost_per_head: evNum("e-cost"),
+      extra_cost: evNum("e-extra"), advance: evNum("e-advance"),
+    };
+    const r = editingEventId
+      ? await api(`/staff/events/${editingEventId}`, "PUT", body)
+      : await api("/staff/events", "POST", body);
+    toast(r.message); resetEventForm(); loadEvents();
   });
 });
 

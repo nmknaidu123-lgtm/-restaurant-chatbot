@@ -128,4 +128,18 @@ def get_events(upcoming_only: bool = False) -> list[dict]:
         sql += " WHERE date >= ?"
         params = (datetime.now().date().isoformat(),)
     with db() as conn:
-        return [dict(r) for r in conn.execute(sql + " ORDER BY date, time", params)]
+        return [event_totals(dict(r)) for r in conn.execute(sql + " ORDER BY date, time", params)]
+
+
+def event_totals(e: dict) -> dict:
+    """Add the money totals to one event.
+    bill       = plates x price per head        (what the customer pays)
+    investment = plates x cost per head + extra (what it costs us)
+    profit     = bill - investment
+    balance    = bill - advance                 (still to collect)"""
+    plates = e.get("guests") or 0
+    bill = plates * (e.get("price_per_head") or 0)
+    investment = plates * (e.get("cost_per_head") or 0) + (e.get("extra_cost") or 0)
+    e.update(total_bill=bill, investment=investment, profit=bill - investment,
+             balance=max(bill - (e.get("advance") or 0), 0))
+    return e

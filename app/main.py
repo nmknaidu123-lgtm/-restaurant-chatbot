@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from app.database import db, init_db, new_password_record
 from app.data import (get_setting, set_setting, get_menu, get_menu_by_category, get_menu_full,
                       get_order_cart, save_order, get_order_status, save_booking, get_booking,
-                      add_order_notes, describe_request,
+                      add_order_notes, describe_request, event_totals,
                       get_events)
 from app.graph import bot, session_state, clear_session
 from app.discounts import generate_code, list_codes, delete_code, apply_code, calculate_bill
@@ -495,6 +495,22 @@ class EventIn(BaseModel):
     time: str = Field(default="", max_length=30, examples=["8 PM"])
     description: str = Field(default="", max_length=500, examples=["Live ghazals with dinner"])
     guests: int = Field(default=0, ge=0, le=10000, examples=[50], description="Plates / people expected")
+    price_per_head: int = Field(default=0, ge=0, le=100000, examples=[450], description="Rs. the customer pays per plate")
+    cost_per_head: int = Field(default=0, ge=0, le=100000, examples=[250], description="Rs. our food cost per plate")
+    extra_cost: int = Field(default=0, ge=0, le=10_000_000, examples=[3000], description="Decoration, music, hall... (Rs.)")
+    advance: int = Field(default=0, ge=0, le=10_000_000, examples=[5000], description="Advance already paid (Rs.)")
+    customer: str = Field(default="", max_length=60, examples=["Ravi Kumar"])
+    phone: str = Field(default="", max_length=20, examples=["9876543210"])
+
+
+EVENT_FIELDS = ("title", "date", "time", "description", "guests", "price_per_head",
+                "cost_per_head", "extra_cost", "advance", "customer", "phone")
+
+
+def _event_values(body: EventIn) -> tuple:
+    d = body.model_dump()
+    d["date"] = body.date.isoformat()
+    return tuple(d[f].strip() if isinstance(d[f], str) else d[f] for f in EVENT_FIELDS)
 
 
 class GuestsUpdate(BaseModel):
@@ -503,8 +519,9 @@ class GuestsUpdate(BaseModel):
 
 @api.get("/events", tags=["Customer"])
 def upcoming_events():
-    """Events from today onwards (for customers)."""
-    return get_events(upcoming_only=True)
+    """Events from today onwards (for customers) - only public details, no prices or phone numbers."""
+    return [{k: e[k] for k in ("title", "date", "time", "description")}
+            for e in get_events(upcoming_only=True)]
 
 
 @api.get("/staff/events", tags=["Staff - Events"])
@@ -517,11 +534,23 @@ def all_events(staff: dict = Depends(current_staff)):
 def add_event(body: EventIn, staff: dict = Depends(current_staff)):
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO events (title, date, time, description, guests) VALUES (?, ?, ?, ?, ?)",
-            (body.title.strip(), body.date.isoformat(), body.time.strip(), body.description.strip(),
-             body.guests),
+            f"INSERT INTO events ({', '.join(EVENT_FIELDS)}) VALUES ({', '.join('?' * len(EVENT_FIELDS))})",
+            _event_values(body),
         )
     return {"message": f"Event '{body.title.strip()}' added", "id": cur.lastrowid}
+
+
+@api.put("/staff/events/{event_id}", tags=["Staff - Events"])
+def edit_event(event_id: int, body: EventIn, staff: dict = Depends(current_staff)):
+    """Change every detail of an event (name, date, plates, prices, advance...)."""
+    with db() as conn:
+        changed = conn.execute(
+            f"UPDATE events SET {', '.join(f + ' = ?' for f in EVENT_FIELDS)} WHERE id = ?",
+            (*_event_values(body), event_id),
+        ).rowcount
+    if not changed:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"message": f"Event '{body.title.strip()}' updated"}
 
 
 @api.patch("/staff/events/{event_id}/guests", tags=["Staff - Events"])
@@ -539,10 +568,14 @@ def events_today(staff: dict = Depends(current_staff)):
     """Today's events and the total number of plates needed."""
     today = dt.date.today().isoformat()
     with db() as conn:
-        rows = [dict(r) for r in conn.execute(
+        rows = [event_totals(dict(r)) for r in conn.execute(
             "SELECT * FROM events WHERE date = ? ORDER BY time", (today,))]
     return {"date": today, "events": len(rows),
-            "total_plates": sum(r["guests"] or 0 for r in rows), "list": rows}
+            "total_plates": sum(r["guests"] or 0 for r in rows),
+            "total_bill": sum(r["total_bill"] for r in rows),
+            "investment": sum(r["investment"] for r in rows),
+            "profit": sum(r["profit"] for r in rows),
+            "balance": sum(r["balance"] for r in rows), "list": rows}
 
 
 @api.delete("/staff/events/{event_id}", tags=["Staff - Events"])
