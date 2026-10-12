@@ -91,6 +91,20 @@
   .col-labels span { flex: 1; text-align: center; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
   .hbar-track { background: var(--bg); border-radius: 4px; height: 10px; width: 100%; min-width: 80px; }
   .hbar { background: var(--brand); height: 10px; border-radius: 0 4px 4px 0; }
+  .chat { display: flex; flex-direction: column; gap: 12px; min-height: 260px; max-height: 60vh; overflow-y: auto; padding: 4px; }
+  .msg { max-width: 80%; padding: 10px 14px; border-radius: 14px; line-height: 1.5; white-space: pre-wrap; }
+  .msg.me { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.ai { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg.err { align-self: flex-start; background: var(--bad-soft); color: var(--bad); }
+  .steps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .step { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #fff; border: 1px solid var(--line); color: var(--muted); }
+  .step.changed { background: var(--ok-soft); border-color: #bfe0c9; color: var(--ok); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .cat-chips button { border-radius: 99px; padding: 6px 12px; font-size: 14px; }
+  .cat-chips button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .cat-chips .n { opacity: .7; font-size: 12px; margin-left: 4px; }
+  .chips button { border-radius: 99px; font-size: 14px; }
   .req { display: inline-block; margin: 2px 0 0; padding: 1px 8px; border-radius: 99px; font-size: 13px;
          background: #fff4d6; color: #7a4b00; border: 1px solid #f0d58a; }
   .order-note { margin-top: 6px; font-size: 13px; color: #7a4b00; }
@@ -134,6 +148,7 @@
     <button data-tab="orders" class="active">Orders</button>
     <button data-tab="sales">Sales</button>
     <button data-tab="money" data-admin>Money</button>
+    <button data-tab="assistant" data-admin>AI Assistant</button>
     <button data-tab="bookings">Bookings</button>
     <button data-tab="menu">Menu</button>
     <button data-tab="discounts">Discounts</button>
@@ -155,6 +170,7 @@
           <input id="o-customer" placeholder="Table number or name (e.g. Table 5)" maxlength="40">
         </div>
         <form class="row" id="o-line-form" style="margin-top:8px">
+          <select id="o-cat" aria-label="Category" style="flex:0 1 180px"><option value="">All categories</option></select>
           <input id="o-dish" placeholder="Dish (start typing)" list="o-dishes" required>
           <datalist id="o-dishes"></datalist>
           <input id="o-qty" type="number" min="1" max="100" value="1" required style="flex:0 1 110px" aria-label="Quantity">
@@ -276,6 +292,29 @@
       </div>
     </div>
 
+    <!-- AI Assistant (admin) -->
+    <div data-panel="assistant" class="hidden">
+      <div class="card">
+        <div class="toolbar">
+          <div><h2 style="margin:0">AI Assistant</h2>
+            <p class="muted" style="margin:4px 0 0">Ask about sales, profit, orders, bookings or the menu. It can also mark dishes sold out, change order status and add spending.</p></div>
+          <button class="small" type="button" onclick="newChat()">New chat</button>
+        </div>
+        <div class="chat" id="chat" aria-live="polite"></div>
+        <div class="chips" id="chips" style="margin:12px 0">
+          <button type="button">How is business today?</button>
+          <button type="button">What is my profit this week?</button>
+          <button type="button">Which orders are still open?</button>
+          <button type="button">Which dishes sell the most? What should I restock?</button>
+          <button type="button">Is my labour cost too high?</button>
+        </div>
+        <form class="row" id="ask-form">
+          <input id="ask-input" placeholder="Ask anything, e.g. Mark Paneer Tikka sold out" maxlength="1000" autocomplete="off">
+          <button class="primary" type="submit" id="ask-send">Send</button>
+        </form>
+      </div>
+    </div>
+
     <!-- Bookings -->
     <div data-panel="bookings" class="hidden">
       <div class="card" style="background:var(--brand-soft);border-color:#f0cdb9">
@@ -320,6 +359,7 @@
       <div class="card">
         <div class="toolbar"><h2>Menu <span class="muted" id="menu-count"></span></h2>
           <input id="menu-search" placeholder="Search dishes..." oninput="renderMenu()"></div>
+        <div class="cat-chips" id="menu-cats" role="group" aria-label="Show one category"></div>
         <div class="table-wrap"><table>
           <thead><tr><th>Dish</th><th class="num">Price</th><th>Available</th><th></th></tr></thead>
           <tbody id="menu-body"></tbody>
@@ -522,7 +562,7 @@ $("logout").addEventListener("click", () => run(async () => {
 }));
 
 // ---------------- Tabs ----------------
-const loaders = { orders: loadOrders, sales: loadSales, money: loadMoney, bookings: loadBookings, menu: loadMenu,
+const loaders = { orders: loadOrders, sales: loadSales, money: loadMoney, assistant: loadAssistant, bookings: loadBookings, menu: loadMenu,
                   discounts: loadDiscounts, events: loadEvents, staff: loadStaff, settings: loadSettings };
 
 function openTab(name) {
@@ -545,12 +585,26 @@ function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+let orderCats = {};       // dish -> category
+
 async function loadOrderMenu() {
   const rows = await api("/staff/menu");
-  orderPrices = {};
-  rows.filter((r) => r.available).forEach((r) => (orderPrices[r.dish] = r.price));
-  $("o-dishes").innerHTML = Object.keys(orderPrices).map((d) => `<option value="${esc(d)}">`).join("");
+  orderPrices = {}; orderCats = {};
+  rows.filter((r) => r.available).forEach((r) => { orderPrices[r.dish] = r.price; orderCats[r.dish] = r.category; });
+  const current = $("o-cat").value;
+  const cats = [...new Set(Object.values(orderCats))];
+  $("o-cat").innerHTML = `<option value="">All categories</option>` +
+    cats.map((c) => `<option ${c === current ? "selected" : ""}>${esc(c)}</option>`).join("");
+  fillOrderDishes();
 }
+
+function fillOrderDishes() {
+  const cat = $("o-cat").value;
+  $("o-dishes").innerHTML = Object.keys(orderPrices)
+    .filter((d) => !cat || orderCats[d] === cat)
+    .map((d) => `<option value="${esc(d)}">${esc(rs(orderPrices[d]))}</option>`).join("");
+}
+$("o-cat").addEventListener("change", () => { fillOrderDishes(); $("o-dish").value = ""; $("o-dish").focus(); });
 
 function requestText(l) {
   return [l.spice, l.for_kids ? "for baby/kids" : "", l.note].filter(Boolean).join(", ");
@@ -790,6 +844,72 @@ $("exp-form").addEventListener("submit", (e) => {
   });
 });
 
+// ---------------- AI Assistant (admin) ----------------
+const STEP_NAMES = {
+  sales_report: "Looked at sales", money_report: "Looked at money", open_orders: "Looked at open orders",
+  bookings: "Looked at bookings", upcoming_events: "Looked at events", search_menu: "Searched the menu",
+  staff_summary: "Looked at staff", set_dish_availability: "Changed a dish", update_order_status: "Changed an order",
+  add_expense: "Added spending",
+};
+let chatId = "c" + Date.now().toString(36);
+let asking = false;
+
+function addMsg(kind, text, steps) {
+  const div = document.createElement("div");
+  div.className = "msg " + kind;
+  div.textContent = text;
+  if (steps && steps.length) {
+    const box = document.createElement("div");
+    box.className = "steps";
+    steps.forEach((s) => {
+      const chip = document.createElement("span");
+      chip.className = "step" + (s.changed_data ? " changed" : "");
+      const detail = s.args && (s.args.dish || s.args.customer || s.args.category || s.args.day || s.args.query) || "";
+      chip.textContent = (STEP_NAMES[s.tool] || s.tool) + (detail ? `: ${detail}` : "");
+      box.appendChild(chip);
+    });
+    div.appendChild(box);
+  }
+  $("chat").appendChild(div);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return div;
+}
+
+function loadAssistant() {
+  if (!$("chat").children.length) {
+    addMsg("ai", "Hello! I can check sales, profit, orders, bookings, events, the menu and staff for you. What would you like to know?");
+  }
+  $("ask-input").focus();
+}
+
+function newChat() {
+  chatId = "c" + Date.now().toString(36);
+  $("chat").innerHTML = "";
+  loadAssistant();
+}
+
+async function sendQuestion(text) {
+  text = text.trim();
+  if (!text || asking) return;
+  asking = true; $("ask-send").disabled = true; $("ask-input").value = "";
+  addMsg("me", text);
+  const thinking = addMsg("ai", "Thinking...");
+  try {
+    const r = await api("/staff/assistant/ask", "POST", { message: text, chat_id: chatId });
+    thinking.remove();
+    addMsg("ai", r.answer, r.steps);
+    if (r.steps.some((s) => s.changed_data)) toast("The assistant changed some data");
+  } catch (e) {
+    thinking.remove();
+    if (e.message !== "Logged out") addMsg("err", e.message);
+  } finally {
+    asking = false; $("ask-send").disabled = false; $("ask-input").focus();
+  }
+}
+
+$("ask-form").addEventListener("submit", (e) => { e.preventDefault(); sendQuestion($("ask-input").value); });
+document.querySelectorAll("#chips button").forEach((b) => b.addEventListener("click", () => sendQuestion(b.textContent)));
+
 // ---------------- Bookings ----------------
 async function loadBookings() {
   const { bookings } = await api("/staff/bookings");
@@ -829,13 +949,32 @@ async function loadMenu() {
   menuRows = await api("/staff/menu");
   const cats = [...new Set(menuRows.map((r) => r.category))];
   $("cats").innerHTML = cats.map((c) => `<option value="${esc(c)}">`).join("");
+  if (menuCategory !== "All" && !cats.includes(menuCategory)) menuCategory = "All";
+  renderMenuCats();
   renderMenu();
+}
+
+let menuCategory = "All";
+
+function renderMenuCats() {
+  const counts = {};
+  menuRows.forEach((r) => (counts[r.category] = (counts[r.category] || 0) + 1));
+  const cats = ["All", ...Object.keys(counts)];
+  $("menu-cats").innerHTML = cats.map((c) => `<button type="button" class="${c === menuCategory ? "on" : ""}"
+    aria-pressed="${c === menuCategory}" data-mcat="${esc(c)}">${esc(c)}<span class="n">${c === "All" ? menuRows.length : counts[c]}</span></button>`).join("");
+  document.querySelectorAll("[data-mcat]").forEach((b) => b.addEventListener("click", () => {
+    menuCategory = b.dataset.mcat;
+    renderMenuCats(); renderMenu();
+  }));
 }
 
 function renderMenu() {
   const q = $("menu-search").value.trim().toLowerCase();
-  const rows = menuRows.filter((r) => !q || r.dish.toLowerCase().includes(q) || r.category.toLowerCase().includes(q));
-  $("menu-count").textContent = `(${menuRows.length} dishes)`;
+  const rows = menuRows.filter((r) =>
+    (menuCategory === "All" || r.category === menuCategory) &&
+    (!q || r.dish.toLowerCase().includes(q) || r.category.toLowerCase().includes(q)));
+  $("menu-count").textContent = menuCategory === "All"
+    ? `(${menuRows.length} dishes)` : `(${rows.length} of ${menuRows.length} dishes)`;
   const isAdmin = me.role === "admin";
   let html = "", lastCat = null;
   for (const r of rows) {

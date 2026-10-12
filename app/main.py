@@ -29,6 +29,8 @@ init_db()      # creates restaurant.db with default data the first time
 
 api = FastAPI(title="Restaurant Chatbot API")
 api.include_router(auth_router)          # /staff/login, /staff/logout, /staff/me
+from app.agent import router as agent_router   # noqa: E402  (AI manager assistant)
+api.include_router(agent_router)         # /staff/assistant/ask
 
 ADMIN_PAGE = Path(__file__).resolve().parent.parent / "static" / "admin.html"
 
