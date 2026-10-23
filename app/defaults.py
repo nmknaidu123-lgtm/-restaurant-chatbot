@@ -3,6 +3,13 @@ defaults.py - Starting data, used ONLY the first time the database is created.
 After that, change everything from the Admin page (http://127.0.0.1:8000/admin).
 """
 
+
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 DEFAULT_SETTINGS = {
     "restaurant_name": "Spice Garden",
     "restaurant_info": (
@@ -17,9 +24,11 @@ DEFAULT_SETTINGS = {
 }
 
 # Demo staff accounts - change the passwords from the Admin page!
+# Starting accounts. On a public server, set ADMIN_PASSWORD and STAFF_PASSWORD
+# as environment variables so nobody can log in with the well-known demo passwords.
 DEFAULT_STAFF = [
-    ("admin", "admin123", "admin"),
-    ("staff1", "staff123", "staff"),
+    ("admin", os.getenv("ADMIN_PASSWORD") or "admin123", "admin"),
+    ("staff1", os.getenv("STAFF_PASSWORD") or "staff123", "staff"),
 ]
 
 DEFAULT_MENU = {

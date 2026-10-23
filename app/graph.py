@@ -20,7 +20,8 @@ load_dotenv()   # reads GEMINI_API_KEY from the .env file
 
 # ---------------- The LLM ----------------
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",   # change if this model is busy
+    # Set GEMINI_MODEL in .env / Render to change it (Flash Lite has a bigger free limit)
+    model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
     api_key=os.getenv("GEMINI_API_KEY"),
 )
 
