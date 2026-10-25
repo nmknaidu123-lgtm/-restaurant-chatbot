@@ -50,7 +50,9 @@ class LoginRequest(BaseModel):
 @router.post("/login")
 def login(req: LoginRequest):
     with db() as conn:
-        user = conn.execute("SELECT * FROM staff WHERE username = ?", (req.username,)).fetchone()
+        # Case-insensitive and trimmed, so phones that type "Admin " still match "admin"
+        user = conn.execute("SELECT * FROM staff WHERE username = ? COLLATE NOCASE",
+                            (req.username.strip(),)).fetchone()
         if not user or not secrets.compare_digest(
             hash_password(req.password, user["salt"]), user["password_hash"]
         ):
