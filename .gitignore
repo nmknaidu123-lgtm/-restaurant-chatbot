@@ -2,3 +2,6 @@
 .env
 __pycache__/
 *.db
+backups/
+app/*_old.py
+~$*
